@@ -151,7 +151,7 @@ router.get("/users/:uid/profile-image", async (req, res) => {
 router.put("/active_users_basic/:id", (req, res) => {
   const staffId = req.params.id;
   const { email, first_name, last_name, type, title, ...otherFields } = req.body;
-  const upda\ted_at = new Date();
+  const updated_at = new Date();
  
   // Remove empty or undefined fields to avoid overwriting with empty values
   const filteredFields = Object.fromEntries(
