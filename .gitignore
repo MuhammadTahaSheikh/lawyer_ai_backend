@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Environment variables (secrets)
+.env
+
+# Runtime data
+case-documents/
+case-media/
+case-eSignTemplate/
+case_templates/
+logs/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Misc
+Mortgage letter.docx
