@@ -7731,7 +7731,7 @@ router.post('/pfs_to_client_spanish/trigger', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Missing caseId' });
   }
 
-  const n8nUrl = 'https://n8n.louislawgroup.com/webhook/PFS-to-Client-Spanish';
+  const n8nUrl = 'https://n8n.louislawgroup.com/webhook/pfs-letter-to-client-spnish';
   console.log('▶️  Triggering PFS to Client in Spanish webhook:', n8nUrl, 'with caseId:', caseId, 'and', documents.length, 'documents');
 
   try {
