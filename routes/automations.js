@@ -7853,7 +7853,7 @@ router.post('/pfs_to_client_spanish/queue', async (req, res) => {
     console.warn('⚠️ Failed to set loading status before queueing PFS to Client in Spanish:', e.message);
   }
 
-  const n8nUrl = 'https://n8n.louislawgroup.com/webhook/PFS-to-Client-Spanish-Email';
+  const n8nUrl = 'https://n8n.louislawgroup.com/webhook/PFS-Letter-to-Client-Email-spanish';
   console.log('▶️  Submitting PFS to Client in Spanish to UiPath via n8n webhook:', n8nUrl, 'with caseId:', caseId, 'and', documents.length, 'documents');
 
   try {
