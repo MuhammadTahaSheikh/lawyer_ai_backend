@@ -7277,6 +7277,618 @@ router.post('/pfs_letter_to_client/queue', async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to submit PFS Letter to Client to UiPath', details: err.message });
   }
 });
+
+// ==============================
+// PFS to Client in Spanish (pfs_to_client_spanish) CRUD & UiPath queue
+// ==============================
+
+// Fetch PFS to Client in Spanish data
+router.get('/pfs_to_client_spanish', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) {
+    console.log('🔍 Fetch PFS to Client in Spanish called with caseId:', caseId);
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+  console.log('🔍 Fetch PFS to Client in Spanish called with caseId:', caseId);
+  try {
+    const [rows] = await db.promisePool.execute(
+      `SELECT
+         case_name,
+         case_number,
+         claim_number,
+         policy_number,
+         premises,
+         date_of_loss,
+         address,
+         type_of_loss,
+         client_email,
+         client_name,
+         indemnity_settlement,
+         less_outstanding_costs,
+         total_disbursement,
+         attorney_fees_and_court_costs,
+         senders_email,
+         assigned_attorney_email,
+         paralegal_assignment_email,
+         uid,
+         uipath_uid,
+         status,
+         created_at,
+         updated_at
+       FROM pfs_to_client_spanish
+       WHERE case_id = ?`,
+      [caseId]
+    );
+    console.log('🔍 PFS to Client in Spanish query returned rows:', rows);
+    const record = rows.find(r => String(r.status).toLowerCase() === 'pending') || (rows.length ? rows[0] : null);
+    console.log('🔍 Selected PFS to Client in Spanish record to return:', record);
+    return res.json({ success: true, data: record });
+  } catch (err) {
+    console.error('❌  Fetch PFS to Client in Spanish data error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Upsert PFS to Client in Spanish data
+router.post('/pfs_to_client_spanish', async (req, res) => {
+  console.log('📥 POST /automations/pfs_to_client_spanish body:', req.body);
+  const uid =
+    (req.body.uid ?? req.headers['x-user-uid']) ||
+    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'));
+  console.log('🆔 PFS to Client in Spanish upsert uid:', uid);
+
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const case_name = req.body.case_name ?? null;
+  const case_number = req.body.case_number ?? null;
+  const claim_number = req.body.claim_number ?? null;
+  const policy_number = req.body.policy_number ?? null;
+  const premises = req.body.premises ?? null;
+  const date_of_loss = req.body.date_of_loss ?? null;
+  const address = req.body.address ?? null;
+  const type_of_loss = req.body.type_of_loss ?? null;
+  const client_email = req.body.client_email ?? null;
+  const client_name = req.body.client_name ?? null;
+  const indemnity_settlement = req.body.indemnity_settlement ?? null;
+  const less_outstanding_costs = req.body.less_outstanding_costs ?? null;
+  const total_disbursement = req.body.total_disbursement ?? null;
+  const attorney_fees_and_court_costs = req.body.attorney_fees_and_court_costs ?? null;
+  const senders_email = req.body.senders_email ?? null;
+  // Accept both n8n field names (attorneys_email, paralegal_email) and database field names
+  const assigned_attorney_email = req.body.attorneys_email ?? req.body.assigned_attorney_email ?? null;
+  const paralegal_assignment_email = req.body.paralegal_email ?? req.body.paralegal_assignment_email ?? null;
+  // Accept status from n8n, default to pending for backward compatibility
+  const status = req.body.status ?? 'pending';
+
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  try {
+    await db.promisePool.execute(
+      `INSERT INTO pfs_to_client_spanish (
+         case_id,
+         uid,
+         case_name,
+         case_number,
+         claim_number,
+         policy_number,
+         premises,
+         date_of_loss,
+         address,
+         type_of_loss,
+         client_email,
+         client_name,
+         indemnity_settlement,
+         less_outstanding_costs,
+         total_disbursement,
+         attorney_fees_and_court_costs,
+         senders_email,
+         assigned_attorney_email,
+         paralegal_assignment_email,
+         status,
+         created_at,
+         updated_at
+       ) VALUES (
+         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW()
+       )
+       ON DUPLICATE KEY UPDATE
+         uid                              = VALUES(uid),
+         case_name                        = VALUES(case_name),
+         case_number                      = VALUES(case_number),
+         claim_number                     = VALUES(claim_number),
+         policy_number                    = VALUES(policy_number),
+         premises                         = VALUES(premises),
+         date_of_loss                     = VALUES(date_of_loss),
+         address                          = VALUES(address),
+         type_of_loss                     = VALUES(type_of_loss),
+         client_email                     = VALUES(client_email),
+         client_name                      = VALUES(client_name),
+         indemnity_settlement             = VALUES(indemnity_settlement),
+         less_outstanding_costs           = VALUES(less_outstanding_costs),
+         total_disbursement               = VALUES(total_disbursement),
+         attorney_fees_and_court_costs    = VALUES(attorney_fees_and_court_costs),
+         senders_email                    = VALUES(senders_email),
+         assigned_attorney_email          = VALUES(assigned_attorney_email),
+         paralegal_assignment_email       = VALUES(paralegal_assignment_email),
+         status                           = VALUES(status),
+         updated_at                       = NOW()`,
+      [
+        caseId,
+        uid,
+        case_name,
+        case_number,
+        claim_number,
+        policy_number,
+        premises,
+        date_of_loss,
+        address,
+        type_of_loss,
+        client_email,
+        client_name,
+        indemnity_settlement,
+        less_outstanding_costs,
+        total_disbursement,
+        attorney_fees_and_court_costs,
+        senders_email,
+        assigned_attorney_email,
+        paralegal_assignment_email,
+        status
+      ]
+    );
+    console.log('✅ PFS to Client in Spanish upsert successful for caseId', caseId);
+    return res.json({ success: true, message: 'PFS to Client in Spanish saved' });
+  } catch (err) {
+    console.error('❌  PFS to Client in Spanish upsert error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Alias route for n8n compatibility
+router.post('/PFS-to-Client-Spanish', async (req, res) => {
+  console.log('📥 POST /automations/PFS-to-Client-Spanish body:', req.body);
+  const uid =
+    (req.body.uid ?? req.headers['x-user-uid']) ||
+    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'));
+  console.log('🆔 PFS to Client in Spanish upsert uid (via alias):', uid);
+
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const case_name = req.body.case_name ?? null;
+  const case_number = req.body.case_number ?? null;
+  const claim_number = req.body.claim_number ?? null;
+  const policy_number = req.body.policy_number ?? null;
+  const premises = req.body.premises ?? null;
+  const date_of_loss = req.body.date_of_loss ?? null;
+  const address = req.body.address ?? null;
+  const type_of_loss = req.body.type_of_loss ?? null;
+  const client_email = req.body.client_email ?? null;
+  const client_name = req.body.client_name ?? null;
+  const indemnity_settlement = req.body.indemnity_settlement ?? null;
+  const less_outstanding_costs = req.body.less_outstanding_costs ?? null;
+  const total_disbursement = req.body.total_disbursement ?? null;
+  const attorney_fees_and_court_costs = req.body.attorney_fees_and_court_costs ?? null;
+  const senders_email = req.body.senders_email ?? null;
+  const assigned_attorney_email = req.body.attorneys_email ?? req.body.assigned_attorney_email ?? null;
+  const paralegal_assignment_email = req.body.paralegal_email ?? req.body.paralegal_assignment_email ?? null;
+  const status = req.body.status ?? 'pending';
+
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  try {
+    await db.promisePool.execute(
+      `INSERT INTO pfs_to_client_spanish (
+         case_id,
+         uid,
+         case_name,
+         case_number,
+         claim_number,
+         policy_number,
+         premises,
+         date_of_loss,
+         address,
+         type_of_loss,
+         client_email,
+         client_name,
+         indemnity_settlement,
+         less_outstanding_costs,
+         total_disbursement,
+         attorney_fees_and_court_costs,
+         senders_email,
+         assigned_attorney_email,
+         paralegal_assignment_email,
+         status,
+         created_at,
+         updated_at
+       ) VALUES (
+         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW()
+       )
+       ON DUPLICATE KEY UPDATE
+         uid                              = VALUES(uid),
+         case_name                        = VALUES(case_name),
+         case_number                      = VALUES(case_number),
+         claim_number                     = VALUES(claim_number),
+         policy_number                    = VALUES(policy_number),
+         premises                         = VALUES(premises),
+         date_of_loss                     = VALUES(date_of_loss),
+         address                          = VALUES(address),
+         type_of_loss                     = VALUES(type_of_loss),
+         client_email                     = VALUES(client_email),
+         client_name                      = VALUES(client_name),
+         indemnity_settlement             = VALUES(indemnity_settlement),
+         less_outstanding_costs           = VALUES(less_outstanding_costs),
+         total_disbursement               = VALUES(total_disbursement),
+         attorney_fees_and_court_costs    = VALUES(attorney_fees_and_court_costs),
+         senders_email                    = VALUES(senders_email),
+         assigned_attorney_email          = VALUES(assigned_attorney_email),
+         paralegal_assignment_email       = VALUES(paralegal_assignment_email),
+         status                           = VALUES(status),
+         updated_at                       = NOW()`,
+      [
+        caseId,
+        uid,
+        case_name,
+        case_number,
+        claim_number,
+        policy_number,
+        premises,
+        date_of_loss,
+        address,
+        type_of_loss,
+        client_email,
+        client_name,
+        indemnity_settlement,
+        less_outstanding_costs,
+        total_disbursement,
+        attorney_fees_and_court_costs,
+        senders_email,
+        assigned_attorney_email,
+        paralegal_assignment_email,
+        status
+      ]
+    );
+    console.log('✅ PFS to Client in Spanish upsert successful for caseId', caseId, '(via alias)');
+    return res.json({ success: true, message: 'PFS to Client in Spanish saved' });
+  } catch (err) {
+    console.error('❌  PFS to Client in Spanish upsert error (via alias):', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Lowercase hyphenated alias
+router.post('/pfs-to-client-spanish', async (req, res) => {
+  console.log('📥 POST /automations/pfs-to-client-spanish body (lowercase alias):', req.body);
+  const uid =
+    (req.body.uid ?? req.headers['x-user-uid']) ||
+    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'));
+  console.log('🆔 PFS to Client in Spanish upsert uid (via lowercase alias):', uid);
+
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const case_name = req.body.case_name ?? null;
+  const case_number = req.body.case_number ?? null;
+  const claim_number = req.body.claim_number ?? null;
+  const policy_number = req.body.policy_number ?? null;
+  const premises = req.body.premises ?? null;
+  const date_of_loss = req.body.date_of_loss ?? null;
+  const address = req.body.address ?? null;
+  const type_of_loss = req.body.type_of_loss ?? null;
+  const client_email = req.body.client_email ?? null;
+  const client_name = req.body.client_name ?? null;
+  const indemnity_settlement = req.body.indemnity_settlement ?? null;
+  const less_outstanding_costs = req.body.less_outstanding_costs ?? null;
+  const total_disbursement = req.body.total_disbursement ?? null;
+  const attorney_fees_and_court_costs = req.body.attorney_fees_and_court_costs ?? null;
+  const senders_email = req.body.senders_email ?? null;
+  const assigned_attorney_email = req.body.attorneys_email ?? req.body.assigned_attorney_email ?? null;
+  const paralegal_assignment_email = req.body.paralegal_email ?? req.body.paralegal_assignment_email ?? null;
+  const status = req.body.status ?? 'pending';
+
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  try {
+    await db.promisePool.execute(
+      `INSERT INTO pfs_to_client_spanish (
+         case_id,
+         uid,
+         case_name,
+         case_number,
+         claim_number,
+         policy_number,
+         premises,
+         date_of_loss,
+         address,
+         type_of_loss,
+         client_email,
+         client_name,
+         indemnity_settlement,
+         less_outstanding_costs,
+         total_disbursement,
+         attorney_fees_and_court_costs,
+         senders_email,
+         assigned_attorney_email,
+         paralegal_assignment_email,
+         status,
+         created_at,
+         updated_at
+       ) VALUES (
+         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW()
+       )
+       ON DUPLICATE KEY UPDATE
+         uid                              = VALUES(uid),
+         case_name                        = VALUES(case_name),
+         case_number                      = VALUES(case_number),
+         claim_number                     = VALUES(claim_number),
+         policy_number                    = VALUES(policy_number),
+         premises                         = VALUES(premises),
+         date_of_loss                     = VALUES(date_of_loss),
+         address                          = VALUES(address),
+         type_of_loss                     = VALUES(type_of_loss),
+         client_email                     = VALUES(client_email),
+         client_name                      = VALUES(client_name),
+         indemnity_settlement             = VALUES(indemnity_settlement),
+         less_outstanding_costs           = VALUES(less_outstanding_costs),
+         total_disbursement               = VALUES(total_disbursement),
+         attorney_fees_and_court_costs    = VALUES(attorney_fees_and_court_costs),
+         senders_email                    = VALUES(senders_email),
+         assigned_attorney_email          = VALUES(assigned_attorney_email),
+         paralegal_assignment_email       = VALUES(paralegal_assignment_email),
+         status                           = VALUES(status),
+         updated_at                       = NOW()`,
+      [
+        caseId,
+        uid,
+        case_name,
+        case_number,
+        claim_number,
+        policy_number,
+        premises,
+        date_of_loss,
+        address,
+        type_of_loss,
+        client_email,
+        client_name,
+        indemnity_settlement,
+        less_outstanding_costs,
+        total_disbursement,
+        attorney_fees_and_court_costs,
+        senders_email,
+        assigned_attorney_email,
+        paralegal_assignment_email,
+        status
+      ]
+    );
+    console.log('✅ PFS to Client in Spanish upsert successful for caseId', caseId, '(via lowercase alias)');
+    return res.json({ success: true, message: 'PFS to Client in Spanish saved' });
+  } catch (err) {
+    console.error('❌  PFS to Client in Spanish upsert error (via lowercase alias):', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Update PFS to Client in Spanish status
+const updatePfsToClientSpanishStatus = async (req, res) => {
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const status = req.body.status ?? 'pending';
+
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  try {
+    await db.promisePool.execute(
+      `UPDATE pfs_to_client_spanish SET status = ?, updated_at = NOW() WHERE case_id = ?`,
+      [status, caseId]
+    );
+    console.log('💾 PFS to Client in Spanish status updated for caseId:', caseId, 'to', status);
+    return res.json({ success: true, message: 'PFS to Client in Spanish status updated' });
+  } catch (err) {
+    console.error('❌  Update PFS to Client in Spanish status error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+router.put('/pfs_to_client_spanish', updatePfsToClientSpanishStatus);
+router.post('/PFS-to-Client-Spanish', updatePfsToClientSpanishStatus);
+router.put('/PFS-to-Client-Spanish', updatePfsToClientSpanishStatus);
+router.post('/pfs-to-client-spanish', updatePfsToClientSpanishStatus);
+router.put('/pfs-to-client-spanish', updatePfsToClientSpanishStatus);
+
+// Delete PFS to Client in Spanish entries
+router.delete('/pfs_to_client_spanish', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute('DELETE FROM pfs_to_client_spanish WHERE case_id = ?', [caseId]);
+    return res.status(200).json({ success: true, message: 'PFS to Client in Spanish entries deleted' });
+  } catch (err) {
+    console.error('❌  Delete PFS to Client in Spanish entries error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Trigger PFS to Client in Spanish via n8n (with caseId and documents)
+router.post('/pfs_to_client_spanish/trigger', async (req, res) => {
+  try {
+    const callerIp = (req.headers['x-forwarded-for']?.split(',')[0] || req.ip || '').toString().trim();
+    const ua = req.headers['user-agent'];
+    console.log('📥 PFS to Client in Spanish /pfs_to_client_spanish/trigger invoked', {
+      ip: callerIp,
+      ua,
+      path: req.originalUrl,
+      method: req.method,
+      hasApiKey: Boolean(req.headers['x-api-key']),
+      xForwardedFor: req.headers['x-forwarded-for'],
+      body: req.body,
+    });
+  } catch (logErr) {
+    console.warn('⚠️ Failed to log PFS to Client in Spanish trigger caller info:', logErr.message);
+  }
+
+  const { caseId, documents = [], uid } = req.body;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  const n8nUrl = 'https://n8n.louislawgroup.com/webhook/PFS-to-Client-Spanish';
+  console.log('▶️  Triggering PFS to Client in Spanish webhook:', n8nUrl, 'with caseId:', caseId, 'and', documents.length, 'documents');
+
+  try {
+    try {
+      await db.promisePool.execute(
+        `INSERT INTO pfs_to_client_spanish (case_id, uid, status, created_at, updated_at)
+         VALUES (?, ?, 'pending', NOW(), NOW())
+         ON DUPLICATE KEY UPDATE
+           status = 'pending',
+           uid = VALUES(uid),
+           updated_at = NOW()`,
+        [caseId, uid || null]
+      );
+      console.log('💾 PFS to Client in Spanish status set to pending for caseId', caseId);
+    } catch (e) {
+      console.warn('⚠️ Failed to set pending status before trigger:', e.message);
+    }
+
+    const payload = {
+      caseId,
+      documents: documents || []
+    };
+
+    const response = await axios.post(n8nUrl, payload);
+    console.log('✅  PFS to Client in Spanish automation triggered:', response.status, response.data);
+
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    const errorData = err.response?.data;
+    const statusCode = err.response?.status;
+
+    if (statusCode === 404 && errorData && typeof errorData === 'object' && errorData.message) {
+      const errorMessage = errorData.message.toLowerCase();
+      if (errorMessage.includes('not registered for post') || errorMessage.includes('did you mean to make a get request')) {
+        console.error('❌  PFS to Client in Spanish trigger error: Webhook not configured for POST requests in n8n');
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to trigger PFS to Client in Spanish automation: Webhook configuration issue',
+          details: 'The n8n webhook is not configured to accept POST requests. Please update the webhook in n8n to accept POST requests, or check if the webhook URL is correct.',
+          n8nError: errorData.message
+        });
+      }
+    }
+
+    console.error('❌  PFS to Client in Spanish trigger error:', errorData || err.message);
+
+    try {
+      await db.promisePool.execute(
+        'UPDATE pfs_to_client_spanish SET status = ?, updated_at = NOW() WHERE case_id = ?',
+        ['failed', caseId]
+      );
+    } catch (e) {
+      console.warn('⚠️ Failed to set failed status:', e.message);
+    }
+
+    return res
+      .status(500)
+      .json({ success: false, message: 'Failed to trigger PFS to Client in Spanish automation', details: err.message });
+  }
+});
+
+// Re-run PFS to Client in Spanish
+router.post('/pfs_to_client_spanish/rerun', async (req, res) => {
+  const { caseId } = req.body;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  try {
+    await db.promisePool.execute('DELETE FROM pfs_to_client_spanish WHERE case_id = ?', [caseId]);
+    console.log('🗑️ Deleted existing PFS to Client in Spanish entries for caseId', caseId);
+
+    const n8nUrl = 'https://dev.louislawgroup.com/automations/pfs_to_client_spanish';
+    console.log('▶️ Re-triggering PFS to Client in Spanish webhook:', n8nUrl, 'with caseId:', caseId);
+    const response = await axios.post(n8nUrl, { caseId });
+    console.log('✅  Re-run PFS to Client in Spanish automation triggered:', response.status);
+
+    return res.json({ success: true, message: 'PFS to Client in Spanish re-run triggered' });
+  } catch (err) {
+    console.error('❌  PFS to Client in Spanish re-run error:', err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Submit PFS to Client in Spanish to UiPath via n8n webhook
+router.post('/pfs_to_client_spanish/queue', async (req, res) => {
+  const {
+    caseId,
+    uid,
+    case_name,
+    case_number,
+    claim_number,
+    policy_number,
+    premises,
+    date_of_loss,
+    address,
+    type_of_loss,
+    client_email,
+    client_name,
+    indemnity_settlement,
+    less_outstanding_costs,
+    total_disbursement,
+    attorney_fees_and_court_costs,
+    senders_email,
+    assigned_attorney_email,
+    paralegal_assignment_email,
+    documents = []
+  } = req.body;
+
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+
+  try {
+    await db.promisePool.execute(
+      'UPDATE pfs_to_client_spanish SET status = ?, uipath_uid = ?, updated_at = NOW() WHERE case_id = ?',
+      ['loading', uid ?? null, caseId]
+    );
+    console.log('💾 PFS to Client in Spanish status set to loading for caseId', caseId, 'by user', uid);
+  } catch (e) {
+    console.warn('⚠️ Failed to set loading status before queueing PFS to Client in Spanish:', e.message);
+  }
+
+  const n8nUrl = 'https://n8n.louislawgroup.com/webhook/PFS-to-Client-Spanish-Email';
+  console.log('▶️  Submitting PFS to Client in Spanish to UiPath via n8n webhook:', n8nUrl, 'with caseId:', caseId, 'and', documents.length, 'documents');
+
+  try {
+    const payload = {
+      caseId,
+      case_name,
+      case_number,
+      claim_number,
+      policy_number,
+      premises,
+      date_of_loss,
+      address,
+      type_of_loss,
+      client_email,
+      client_name,
+      indemnity_settlement,
+      less_outstanding_costs,
+      total_disbursement,
+      attorney_fees_and_court_costs,
+      senders_email,
+      attorneys_email: assigned_attorney_email,
+      paralegal_email: paralegal_assignment_email,
+      uid,
+      documents: documents || []
+    };
+
+    const response = await axios.post(n8nUrl, payload);
+    console.log('✅ PFS to Client in Spanish UiPath submission triggered:', response.status, response.data);
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    console.error('❌ PFS to Client in Spanish UiPath submission error for caseId', caseId, ':', err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: 'Failed to submit PFS to Client in Spanish to UiPath', details: err.message });
+  }
+});
+
 // ==============================
 // PFS to Defendant (pfs_to_defendant) CRUD & UiPath queue
 // ==============================
