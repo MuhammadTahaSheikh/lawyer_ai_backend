@@ -152,27 +152,33 @@ router.get("/companies/:id", (req, res) => {
  
 // 🟢 POST /companies – Create
 router.post("/companies", (req, res) => {
-  const {
-    id, name, email, website, notes, address1, address2,
-    city, state, zip_code, country, main_phone_number,
-    fax_phone_number, created_at, updated_at, archived
-  } = req.body;
- 
-  const sql = `
-    INSERT INTO company (
-      id, name, email, website, notes,
-      address1, address2, city, state, zip_code, country,
-      main_phone_number, fax_phone_number, created_at, updated_at, archived
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `;
- 
-  db.query(sql, [
-    id, name, email, website, notes,
-    address1, address2, city, state, zip_code, country,
-    main_phone_number, fax_phone_number, created_at, updated_at, archived
-  ], (err) => {
-    if (err) return res.status(500).send("Error creating company.");
-    res.status(201).json({ message: "Company created." });
+  const allowedFields = [
+    "id", "name", "email", "website", "notes", "address1", "address2",
+    "city", "state", "zip_code", "country", "main_phone_number",
+    "fax_phone_number", "created_at", "updated_at", "archived"
+  ];
+
+  const data = {};
+  for (const field of allowedFields) {
+    if (req.body[field] !== undefined) {
+      data[field] = req.body[field];
+    }
+  }
+
+  if (!data.name) {
+    return res.status(400).send("Company name is required.");
+  }
+
+  const now = new Date();
+  if (!data.created_at) data.created_at = now;
+  if (!data.updated_at) data.updated_at = now;
+
+  db.query("INSERT INTO company SET ?", [data], (err, result) => {
+    if (err) {
+      console.error("SQL Error:", err);
+      return res.status(500).json({ error: "Error creating company.", details: err.message });
+    }
+    res.status(201).json({ message: "Company created.", id: data.id || result.insertId });
   });
 });
  
@@ -187,6 +193,8 @@ router.put("/companies/:id", (req, res) => {
     ...data
   } = req.body;
  
+  data.updated_at = new Date();
+
   db.query("UPDATE company SET ? WHERE id = ?", [data, id], (err, result) => {
     if (err) {
       console.error("SQL Error:", err);
@@ -212,6 +220,50 @@ router.delete("/companies/:id", (req, res) => {
   });
 });
  
+// POST /companies/:id/cases – Link a company to a case
+router.post("/companies/:id/cases", (req, res) => {
+  const companyId = req.params.id;
+  const { case_id } = req.body;
+
+  if (!case_id) {
+    return res.status(400).send("case_id is required.");
+  }
+
+  const sql = "INSERT IGNORE INTO company_case (company_id, case_id) VALUES (?, ?)";
+  db.query(sql, [companyId, case_id], (err) => {
+    if (err) return res.status(500).send("Error linking company to case.");
+    res.status(201).json({ message: "Company linked to case." });
+  });
+});
+
+// DELETE /companies/:id/cases/:caseId – Unlink a company from a case
+router.delete("/companies/:id/cases/:caseId", (req, res) => {
+  const { id, caseId } = req.params;
+
+  const sql = "DELETE FROM company_case WHERE company_id = ? AND case_id = ?";
+  db.query(sql, [id, caseId], (err, result) => {
+    if (err) return res.status(500).send("Error unlinking company from case.");
+    if (!result.affectedRows) return res.status(404).send("Link not found.");
+    res.send("Company unlinked from case.");
+  });
+});
+
+// GET /companies/case/:caseId – Get all companies linked to a specific case
+router.get("/companies/case/:caseId", (req, res) => {
+  const caseId = req.params.caseId;
+
+  const sql = `
+    SELECT c.* FROM company c
+    JOIN company_case cc ON c.id = cc.company_id
+    WHERE cc.case_id = ?
+  `;
+
+  db.query(sql, [caseId], (err, results) => {
+    if (err) return res.status(500).send("Error fetching companies for case.");
+    res.json(results);
+  });
+});
+
 module.exports = router;
  
  

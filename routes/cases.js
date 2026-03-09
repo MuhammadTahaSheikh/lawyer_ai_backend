@@ -124,6 +124,72 @@ function mergeSelectedColumns(baseCols, includeFields) {
   return [...new Set([ ...baseCols, ...escaped ])];
 }
 
+function hasMeaningfulValue(value) {
+  return value !== null && value !== undefined && String(value).trim() !== "";
+}
+
+function enrichCasesWithNextEventAndTask(rows, callback) {
+  const list = Array.isArray(rows) ? rows : [];
+  const caseIds = list.map((r) => r.case_id).filter((id) => id != null);
+
+  if (caseIds.length === 0) {
+    return callback(list);
+  }
+
+  const placeholders = caseIds.map(() => "?").join(",");
+  const nextEventQuery = `
+    SELECT e.case_id, e.event_name
+    FROM case_events e
+    INNER JOIN (
+      SELECT case_id, MIN(start_event) AS next_start
+      FROM case_events
+      WHERE case_id IN (${placeholders}) AND start_event >= NOW()
+      GROUP BY case_id
+    ) ne ON ne.case_id = e.case_id AND ne.next_start = e.start_event
+  `;
+  const nextTaskQuery = `
+    SELECT t.case_id, t.task_name
+    FROM task_record t
+    INNER JOIN (
+      SELECT case_id, MIN(due_date) AS next_due
+      FROM task_record
+      WHERE case_id IN (${placeholders}) AND completed = 0 AND due_date >= CURDATE()
+      GROUP BY case_id
+    ) nt ON nt.case_id = t.case_id AND nt.next_due = t.due_date
+  `;
+
+  db.query(nextEventQuery, caseIds, (eventErr, eventRows) => {
+    if (eventErr) {
+      console.error("Error fetching next events:", eventErr);
+    }
+    const nextEventByCaseId = (eventRows || []).reduce((acc, row) => {
+      if (!acc[row.case_id] && hasMeaningfulValue(row.event_name)) {
+        acc[row.case_id] = row.event_name;
+      }
+      return acc;
+    }, {});
+
+    db.query(nextTaskQuery, caseIds, (taskErr, taskRows) => {
+      if (taskErr) {
+        console.error("Error fetching next tasks:", taskErr);
+      }
+      const nextTaskByCaseId = (taskRows || []).reduce((acc, row) => {
+        if (!acc[row.case_id] && hasMeaningfulValue(row.task_name)) {
+          acc[row.case_id] = row.task_name;
+        }
+        return acc;
+      }, {});
+
+      const enriched = list.map((c) => ({
+        ...c,
+        next_event: hasMeaningfulValue(c.next_event) ? c.next_event : (nextEventByCaseId[c.case_id] || ""),
+        next_task: hasMeaningfulValue(c.next_task) ? c.next_task : (nextTaskByCaseId[c.case_id] || ""),
+      }));
+
+      callback(enriched);
+    });
+  });
+}
 /* ---------------- GET /cases (existing) ---------------- */
 router.get("/cases", (req, res) => {
   const page = parseInt(req.query.page, 10) || 1;
@@ -341,7 +407,9 @@ function handleCasesListPost(req, res) {
   }
   const offset = noLimit ? 0 : (page - 1) * limit;
 
-  const caseStage = src.case_stage || "";
+  // const caseStage = src.case_stage || "";
+   const caseStageRaw = src.case_stage;
+  const caseStages = Array.isArray(caseStageRaw) ? caseStageRaw.filter(Boolean) : (caseStageRaw ? [caseStageRaw] : []);
   const search = src.search || "";
   // const practiceArea = src.practice_area || "";
 
@@ -358,8 +426,14 @@ function handleCasesListPost(req, res) {
   let conditions = [];
   let values = [];
 
-  if (caseStage) { conditions.push("case_stage = ?"); values.push(caseStage); }
-
+  // if (caseStage) { conditions.push("case_stage = ?"); values.push(caseStage); }
+if (caseStages.length === 1) {
+    conditions.push("case_stage = ?");
+    values.push(caseStages[0]);
+  } else if (caseStages.length > 1) {
+    conditions.push(`case_stage IN (${caseStages.map(() => '?').join(',')})`);
+    values.push(...caseStages);
+  }
   if (search) {
     conditions.push("(name LIKE ? OR case_number LIKE ? OR claim_number LIKE ?)");
     values.push(`%${search}%`, `%${search}%`, `%${search}%`);
@@ -504,7 +578,10 @@ if (practiceAreas.length === 1) {
             billable_expenses: 0,
             non_billable_expenses: 0,
           }));
-          return res.json({ totalCases, cases: casesWithAmounts });
+          // return res.json({ totalCases, cases: casesWithAmounts });
+           return enrichCasesWithNextEventAndTask(casesWithAmounts, (enrichedCases) => {
+            res.json({ totalCases, cases: enrichedCases });
+          });
         }
 
         const placeholders = caseIds.map(() => "?").join(",");
@@ -534,7 +611,10 @@ if (practiceAreas.length === 1) {
               billable_expenses: 0,
               non_billable_expenses: 0,
             }));
-            return res.json({ totalCases, cases: casesWithAmounts });
+            // return res.json({ totalCases, cases: casesWithAmounts });
+             return enrichCasesWithNextEventAndTask(casesWithAmounts, (enrichedCases) => {
+              res.json({ totalCases, cases: enrichedCases });
+            });
           }
           const amountByCaseId = (amountsRows || []).reduce((acc, row) => {
             acc[row.case_id] = {
@@ -561,7 +641,10 @@ if (practiceAreas.length === 1) {
               billable_expenses: expenseByCaseId[c.case_id]?.billable_expenses ?? 0,
               non_billable_expenses: expenseByCaseId[c.case_id]?.non_billable_expenses ?? 0,
             }));
-            res.json({ totalCases, cases: casesWithAmounts });
+            // res.json({ totalCases, cases: casesWithAmounts });
+            enrichCasesWithNextEventAndTask(casesWithAmounts, (enrichedCases) => {
+              res.json({ totalCases, cases: enrichedCases });
+            });
           });
         });
       });
@@ -687,7 +770,9 @@ router.get("/cases/export", (req, res) => {
 router.post("/cases/export", (req, res) => {
   const src = getFilterSource(req);
   const sort = src.sort || "STR_TO_DATE(opened_date, '%m/%d/%y') DESC";
-  const caseStage = src.case_stage || "";
+  // const caseStage = src.case_stage || "";
+  const caseStageRaw = src.case_stage;
+  const caseStages = Array.isArray(caseStageRaw) ? caseStageRaw.filter(Boolean) : (caseStageRaw ? [caseStageRaw] : []);
   const search = src.search || "";
   // const practiceArea = src.practice_area || "";
 
@@ -703,7 +788,14 @@ router.post("/cases/export", (req, res) => {
   let conditions = [];
   let values = [];
 
-  if (caseStage) { conditions.push("case_stage = ?"); values.push(caseStage); }
+  // if (caseStage) { conditions.push("case_stage = ?"); values.push(caseStage); }
+  if (caseStages.length === 1) {
+    conditions.push("case_stage = ?");
+    values.push(caseStages[0]);
+  } else if (caseStages.length > 1) {
+    conditions.push(`case_stage IN (${caseStages.map(() => '?').join(',')})`);
+    values.push(...caseStages);
+  }
   if (search) { conditions.push("(name LIKE ? OR case_number LIKE ?)"); values.push(`%${search}%`, `%${search}%`); }
   // if (practiceArea) { conditions.push("practice_area = ?"); values.push(practiceArea); }
  if (practiceAreas.length === 1) {
@@ -770,7 +862,10 @@ router.post("/cases/export", (req, res) => {
         billable_expenses: 0,
         non_billable_expenses: 0,
       }));
-      return res.json({ cases: withAmounts });
+      // return res.json({ cases: withAmounts });
+        return enrichCasesWithNextEventAndTask(withAmounts, (enrichedCases) => {
+        res.json({ cases: enrichedCases });
+      });
     }
     const placeholders = caseIds.map(() => "?").join(",");
     const amountsQuery = `
@@ -799,7 +894,10 @@ router.post("/cases/export", (req, res) => {
           billable_expenses: 0,
           non_billable_expenses: 0,
         }));
-        return res.json({ cases: withAmounts });
+        // return res.json({ cases: withAmounts });
+         return enrichCasesWithNextEventAndTask(withAmounts, (enrichedCases) => {
+          res.json({ cases: enrichedCases });
+        });
       }
       const amountByCaseId = (amountsRows || []).reduce((acc, row) => {
         acc[row.case_id] = {
@@ -826,7 +924,10 @@ router.post("/cases/export", (req, res) => {
           billable_expenses: expenseByCaseId[c.case_id]?.billable_expenses ?? 0,
           non_billable_expenses: expenseByCaseId[c.case_id]?.non_billable_expenses ?? 0,
         }));
-        res.json({ cases: withAmounts });
+        // res.json({ cases: withAmounts });
+          enrichCasesWithNextEventAndTask(withAmounts, (enrichedCases) => {
+          res.json({ cases: enrichedCases });
+        });
       });
     });
   });
