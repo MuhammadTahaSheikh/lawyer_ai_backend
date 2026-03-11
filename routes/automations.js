@@ -6654,6 +6654,329 @@ router.post('/sal_request_spanish/queue', async (req, res) => {
 });
 
 // ==============================
+// Policy Request Automation (policy_request_automation) CRUD & UiPath queue
+// ==============================
+
+// Fetch Policy Request Automation data
+router.get('/policy_request_automation', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) {
+    console.log('🔍 Fetch Policy Request Automation called with caseId:', caseId);
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+  console.log('🔍 Fetch Policy Request Automation called with caseId:', caseId);
+  try {
+    const [rows] = await db.promisePool.execute(
+      `SELECT
+         insurance_company,
+         policy_number,
+         client_name,
+         claim_number,
+         date_of_loss,
+         property_address,
+         premises,
+         insured_email,
+         attorney_email,
+         paralegal_email,
+         uid,
+         uipath_uid,
+         status,
+         created_at,
+         updated_at
+       FROM policy_request_automation
+       WHERE case_id = ?`,
+      [caseId]
+    );
+    console.log('🔍 Policy Request Automation query returned rows:', rows);
+    const record = rows.find(r => String(r.status).toLowerCase() === 'pending') || (rows.length ? rows[0] : null);
+    console.log('🔍 Selected Policy Request Automation record to return:', record);
+    return res.json({ success: true, data: record });
+  } catch (err) {
+    console.error('❌  Fetch Policy Request Automation data error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Upsert Policy Request Automation data
+router.post('/policy_request_automation', async (req, res) => {
+  console.log('📥 POST /automations/policy_request_automation body:', req.body);
+  const uid =
+    (req.body.uid ?? req.headers['x-user-uid']) ||
+    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'));
+  console.log('🆔 Policy Request Automation upsert uid:', uid);
+
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const insurance_company = req.body.insurance_company ?? null;
+  const policy_number = req.body.policy_number ?? null;
+  const client_name = req.body.client_name ?? null;
+  const claim_number = req.body.claim_number ?? null;
+  const date_of_loss = req.body.date_of_loss ?? null;
+  const premises = req.body.premises ?? null;
+  const insured_email = req.body.insured_email ?? req.body.insureds_email ?? req.body["insured's_email"] ?? null;
+  const attorney_email = req.body.attorney_email ?? req.body.attorneys_email ?? null;
+  const paralegal_email = req.body.paralegal_email ?? req.body.paralegals_email ?? null;
+
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  try {
+    await db.promisePool.execute(
+      `INSERT INTO policy_request_automation (
+         case_id,
+         uid,
+         insurance_company,
+         policy_number,
+         client_name,
+         claim_number,
+         date_of_loss,
+         premises,
+         insured_email,
+         attorney_email,
+         paralegal_email,
+         status,
+         created_at,
+         updated_at
+       ) VALUES (
+         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW()
+       )
+       ON DUPLICATE KEY UPDATE
+         uid               = VALUES(uid),
+         insurance_company = VALUES(insurance_company),
+         policy_number     = VALUES(policy_number),
+         client_name       = VALUES(client_name),
+         claim_number      = VALUES(claim_number),
+         date_of_loss      = VALUES(date_of_loss),
+         premises          = VALUES(premises),
+         insured_email     = VALUES(insured_email),
+         attorney_email    = VALUES(attorney_email),
+         paralegal_email   = VALUES(paralegal_email),
+         status            = VALUES(status),
+         updated_at        = NOW()
+      `,
+      [
+        caseId,
+        uid,
+        insurance_company,
+        policy_number,
+        client_name,
+        claim_number,
+        date_of_loss,
+        premises,
+        insured_email,
+        attorney_email,
+        paralegal_email
+      ]
+    );
+
+    return res.json({ success: true, message: 'Policy Request Automation data saved' });
+  } catch (err) {
+    console.error('❌  Policy Request Automation data save error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Update Policy Request Automation status
+router.put('/policy_request_automation', async (req, res) => {
+  try {
+    const caseId = req.body.caseId ?? req.body.case_id ?? req.query.caseId ?? req.query.case_id ?? null;
+    let raw = (req.body.status ?? req.query.status ?? '').toString().trim().toLowerCase();
+
+    if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+    if (!raw) return res.status(400).json({ success: false, message: 'Missing status' });
+
+    const MAP = { complete: 'completed', in_progress: 'loading' };
+    const status = MAP[raw] ?? raw;
+    const ALLOWED = new Set(['pending', 'loading', 'completed', 'failed']);
+    if (!ALLOWED.has(status)) {
+      return res.status(400).json({ success: false, message: `Invalid status value: ${raw}. Allowed: ${[...ALLOWED].join(', ')}` });
+    }
+
+    const [result] = await db.promisePool.execute(
+      'UPDATE policy_request_automation SET status = ? WHERE case_id = ?',
+      [status, caseId]
+    );
+
+    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Case not found' });
+
+    console.log('✅ Updated Policy Request Automation status for caseId', caseId, 'to', status);
+    return res.json({ success: true, message: 'Policy Request Automation status updated', status });
+  } catch (err) {
+    console.error('❌  Update Policy Request Automation status error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Alias for status update
+router.put('/policy_request_automation/status', async (req, res) => {
+  try {
+    const caseId = req.body.caseId ?? req.body.case_id ?? req.query.caseId ?? req.query.case_id ?? null;
+    let raw = (req.body.status ?? req.query.status ?? '').toString().trim().toLowerCase();
+
+    if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+    if (!raw) return res.status(400).json({ success: false, message: 'Missing status' });
+
+    const MAP = { complete: 'completed', in_progress: 'loading' };
+    const status = MAP[raw] ?? raw;
+    const ALLOWED = new Set(['pending', 'loading', 'completed', 'failed']);
+    if (!ALLOWED.has(status)) {
+      return res.status(400).json({ success: false, message: `Invalid status value: ${raw}. Allowed: ${[...ALLOWED].join(', ')}` });
+    }
+
+    const [result] = await db.promisePool.execute(
+      'UPDATE policy_request_automation SET status = ? WHERE case_id = ?',
+      [status, caseId]
+    );
+
+    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Case not found' });
+
+    console.log('✅ Updated Policy Request Automation status for caseId', caseId, 'to', status);
+    return res.json({ success: true, message: 'Policy Request Automation status updated', status });
+  } catch (err) {
+    console.error('❌  Update Policy Request Automation status error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Delete Policy Request Automation entries
+router.delete('/policy_request_automation', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute('DELETE FROM policy_request_automation WHERE case_id = ?', [caseId]);
+    return res.status(200).json({ success: true, message: 'Policy Request Automation entries deleted' });
+  } catch (err) {
+    console.error('❌  Delete Policy Request Automation entries error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.delete('/policy_request_automation/:caseId', async (req, res) => {
+  const caseId = req.params.caseId;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute('DELETE FROM policy_request_automation WHERE case_id = ?', [caseId]);
+    return res.status(200).json({ success: true, message: 'Policy Request Automation entries deleted' });
+  } catch (err) {
+    console.error('❌  Delete Policy Request Automation entries by param error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Trigger Policy Request Automation via n8n
+router.post('/policy_request_automation/trigger', async (req, res) => {
+  const { caseId } = req.body;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  const n8nUrl = 'https://n8n.louislawgroup.com/webhook/policy-request-automation';
+  if (!n8nUrl) {
+    return res.status(500).json({ success: false, message: 'N8N webhook URL not configured (N8N_POLICY_REQUEST_AUTOMATION_WEBHOOK_URL)' });
+  }
+  console.log('▶️  Triggering Policy Request Automation webhook:', n8nUrl, 'with caseId:', caseId);
+
+  try {
+    const response = await axios.post(n8nUrl, { caseId });
+    console.log('✅  Policy Request Automation triggered:', response.status, response.data);
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    console.error('❌  Policy Request Automation trigger error:', err.response?.data || err.message);
+    return res
+      .status(500)
+      .json({ success: false, message: 'Failed to trigger Policy Request Automation', details: err.message });
+  }
+});
+
+// Re-run Policy Request Automation: clear existing and trigger again via n8n
+router.post('/policy_request_automation/rerun', async (req, res) => {
+  const { caseId } = req.body;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  try {
+    await db.promisePool.execute('DELETE FROM policy_request_automation WHERE case_id = ?', [caseId]);
+    console.log('🗑️ Deleted existing Policy Request Automation entries for caseId', caseId);
+
+    const n8nUrl = 'https://n8n.louislawgroup.com/webhook/policy-request-automation';
+    if (!n8nUrl) {
+      return res.status(500).json({ success: false, message: 'N8N webhook URL not configured (N8N_POLICY_REQUEST_AUTOMATION_WEBHOOK_URL)' });
+    }
+
+    console.log('▶️ Re-triggering Policy Request Automation webhook:', n8nUrl, 'with caseId:', caseId);
+    const response = await axios.post(n8nUrl, { caseId });
+    console.log('✅  Re-run Policy Request Automation triggered:', response.status);
+
+    return res.json({ success: true, message: 'Policy Request Automation re-run triggered' });
+  } catch (err) {
+    console.error('❌  Policy Request Automation re-run error:', err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Submit Policy Request Automation to UiPath via n8n webhook
+router.post('/policy_request_automation/queue', async (req, res) => {
+  const {
+    caseId,
+    uid,
+    insurance_company,
+    policy_number,
+    client_name,
+    claim_number,
+    date_of_loss,
+    premises,
+    property_address,
+    insured_email,
+    attorney_email,
+    paralegal_email
+  } = req.body;
+
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+
+  try {
+    await db.promisePool.execute(
+      'UPDATE policy_request_automation SET status = ?, uipath_uid = ?, updated_at = NOW() WHERE case_id = ?',
+      ['loading', uid ?? null, caseId]
+    );
+    console.log('💾 Policy Request Automation status set to loading for caseId', caseId, 'by user', uid);
+  } catch (e) {
+    console.warn('⚠️ Failed to set loading status before queueing Policy Request Automation:', e.message);
+  }
+
+  const n8nUrl ='https://n8n.louislawgroup.com/webhook/policy-request-automation-email';
+  if (!n8nUrl) {
+    return res.status(500).json({
+      success: false,
+      message: 'N8N queue webhook URL not configured (N8N_POLICY_REQUEST_AUTOMATION_UIPATH_WEBHOOK_URL or N8N_POLICY_REQUEST_AUTOMATION_WEBHOOK_URL)'
+    });
+  }
+  console.log('▶️  Submitting Policy Request Automation to UiPath via n8n webhook:', n8nUrl, 'with caseId:', caseId);
+
+  try {
+    const payload = {
+      caseId,
+      insurance_company,
+      policy_number,
+      client_name,
+      claim_number,
+      date_of_loss,
+      premises,
+      insured_email,
+      attorney_email,
+      paralegal_email,
+      uid
+    };
+
+    const response = await axios.post(n8nUrl, payload);
+    console.log('✅ Policy Request Automation UiPath submission triggered:', response.status, response.data);
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    console.error('❌ Policy Request Automation UiPath submission error for caseId', caseId, ':', err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: 'Failed to submit Policy Request Automation to UiPath', details: err.message });
+  }
+});
+// ==============================
 // PFS Letter to Client (pfs_letter_to_client) CRUD & UiPath queue
 // ==============================
 
