@@ -138,8 +138,280 @@ router.get("/companies/names", (req, res) => {
     res.json(results);
   });
 });
- 
- 
+
+
+// GET /companies/:id/notes - Paginated notes across all linked cases
+router.get("/companies/:id/notes", async (req, res) => {
+  const companyId = req.params.id;
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 20;
+  const offset = (page - 1) * limit;
+  const caseIdsFromQuery = String(req.query.case_ids || "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+  try {
+    let caseIds = caseIdsFromQuery;
+    if (!caseIds.length) {
+      const [linkedCases] = await db.promise().query(
+        "SELECT case_id FROM company_case WHERE company_id = ?",
+        [companyId]
+      );
+      caseIds = linkedCases.map((r) => String(r.case_id)).filter(Boolean);
+    }
+
+    if (!caseIds.length) {
+      return res.json({ caseNotes: [], totalNotes: 0, page, limit });
+    }
+
+    const placeholders = caseIds.map(() => "?").join(",");
+
+    const [rows] = await db.promise().query(
+      `
+      SELECT SQL_CALC_FOUND_ROWS
+        cn.id,
+        cn.case_id,
+        cn.subject,
+        cn.note,
+        cn.date,
+        cn.created_at AS createdAt,
+        cn.updated_at AS updatedAt,
+        CONCAT(au1.first_name, ' ', au1.last_name) AS createdBy,
+        CONCAT(au2.first_name, ' ', au2.last_name) AS updatedBy,
+        CONCAT(s1.first_name, ' ', s1.last_name)   AS createdByStaff,
+        CONCAT(s2.first_name, ' ', s2.last_name)   AS updatedByStaff,
+        cs.name AS case_name
+      FROM case_notes_record cn
+      LEFT JOIN active_users au1 ON cn.created_by_id = au1.staff_id
+      LEFT JOIN active_users au2 ON cn.updated_by_id = au2.staff_id
+      LEFT JOIN staff        s1  ON cn.created_by_id = s1.staff_id
+      LEFT JOIN staff        s2  ON cn.updated_by_id = s2.staff_id
+      LEFT JOIN cases        cs  ON CAST(cs.case_id AS CHAR) = CAST(cn.case_id AS CHAR)
+      WHERE CAST(cn.case_id AS CHAR) IN (${placeholders})
+      ORDER BY cn.date DESC, cn.created_at DESC
+      LIMIT ? OFFSET ?
+      `,
+      [...caseIds, limit, offset]
+    );
+
+    const [[{ "FOUND_ROWS()": totalNotes }]] = await db
+      .promise()
+      .query("SELECT FOUND_ROWS()");
+
+    const formatDate = (date) =>
+      new Date(date).toLocaleString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+
+    const caseNotes = rows.map((n) => ({
+      ...n,
+      date: formatDate(n.date),
+      createdAt: formatDate(n.createdAt),
+      updatedAt: formatDate(n.updatedAt),
+    }));
+
+    res.json({ caseNotes, totalNotes, page, limit });
+  } catch (err) {
+    console.error("Error fetching company notes:", err);
+    res.status(500).send("Error fetching company notes.");
+  }
+});
+
+// GET /companies/:id/documents - Paginated documents across linked cases
+router.get("/companies/:id/documents", async (req, res) => {
+  const companyId = req.params.id;
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 20;
+  const offset = (page - 1) * limit;
+  const caseIdsFromQuery = String(req.query.case_ids || "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+  try {
+    let caseIds = caseIdsFromQuery;
+    if (!caseIds.length) {
+      const [linkedCases] = await db
+        .promise()
+        .query("SELECT case_id FROM company_case WHERE company_id = ?", [companyId]);
+      caseIds = linkedCases.map((r) => String(r.case_id)).filter(Boolean);
+    }
+
+    if (!caseIds.length) {
+      return res.json({ documents: [], totalDocuments: 0, page, limit });
+    }
+
+    const placeholders = caseIds.map(() => "?").join(",");
+    const [rows] = await db.promise().query(
+      `
+      SELECT SQL_CALC_FOUND_ROWS
+        d.id,
+        d.case_id,
+        d.filename AS fileName,
+        d.path,
+        d.uid AS uploader_uid,
+        d.uid_name AS uploader_name,
+        d.created_at AS createdAt,
+        d.updated_at AS updatedAt,
+        c.name AS case_name
+      FROM documents d
+      LEFT JOIN cases c ON CAST(c.case_id AS CHAR) = CAST(d.case_id AS CHAR)
+      WHERE CAST(d.case_id AS CHAR) IN (${placeholders})
+      ORDER BY d.updated_at DESC, d.created_at DESC
+      LIMIT ? OFFSET ?
+      `,
+      [...caseIds, limit, offset]
+    );
+
+    const [[{ "FOUND_ROWS()": totalDocuments }]] = await db
+      .promise()
+      .query("SELECT FOUND_ROWS()");
+
+    res.json({ documents: rows || [], totalDocuments, page, limit });
+  } catch (err) {
+    console.error("Error fetching company documents:", err);
+    res.status(500).send("Error fetching company documents.");
+  }
+});
+
+// GET /companies/:id/tasks - Paginated tasks across linked cases
+router.get("/companies/:id/tasks", async (req, res) => {
+  const companyId = req.params.id;
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 20;
+  const offset = (page - 1) * limit;
+  const caseIdsFromQuery = String(req.query.case_ids || "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+  try {
+    let caseIds = caseIdsFromQuery;
+    if (!caseIds.length) {
+      const [linkedCases] = await db
+        .promise()
+        .query("SELECT case_id FROM company_case WHERE company_id = ?", [companyId]);
+      caseIds = linkedCases.map((r) => String(r.case_id)).filter(Boolean);
+    }
+
+    if (!caseIds.length) {
+      return res.json({ tasks: [], totalTasks: 0, page, limit });
+    }
+
+    const placeholders = caseIds.map(() => "?").join(",");
+    const [rows] = await db.promise().query(
+      `
+      SELECT SQL_CALC_FOUND_ROWS
+        t.*,
+        c.name AS case_name
+      FROM task_record t
+      LEFT JOIN cases c ON CAST(c.case_id AS CHAR) = CAST(t.case_id AS CHAR)
+      WHERE CAST(t.case_id AS CHAR) IN (${placeholders})
+      ORDER BY t.due_date ASC, t.created_at DESC
+      LIMIT ? OFFSET ?
+      `,
+      [...caseIds, limit, offset]
+    );
+
+    const [[{ "FOUND_ROWS()": totalTasks }]] = await db
+      .promise()
+      .query("SELECT FOUND_ROWS()");
+
+    res.json({ tasks: rows || [], totalTasks, page, limit });
+  } catch (err) {
+    console.error("Error fetching company tasks:", err);
+    res.status(500).send("Error fetching company tasks.");
+  }
+});
+
+// GET /companies/:id/events - Paginated events across linked cases
+router.get("/companies/:id/events", async (req, res) => {
+  const companyId = req.params.id;
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 20;
+  const offset = (page - 1) * limit;
+  const start = req.query.start;
+  const end = req.query.end;
+  const caseIdsFromQuery = String(req.query.case_ids || "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+  try {
+    let caseIds = caseIdsFromQuery;
+    if (!caseIds.length) {
+      const [linkedCases] = await db
+        .promise()
+        .query("SELECT case_id FROM company_case WHERE company_id = ?", [companyId]);
+      caseIds = linkedCases.map((r) => String(r.case_id)).filter(Boolean);
+    }
+
+    if (!caseIds.length) {
+      return res.json({ events: [], totalEvents: 0, page, limit });
+    }
+
+    const placeholders = caseIds.map(() => "?").join(",");
+    const dateCondition = start && end ? "AND e.start_event BETWEEN ? AND ?" : "";
+    const dateParams = start && end ? [start, end] : [];
+
+    const [rows] = await db.promise().query(
+      `
+      SELECT SQL_CALC_FOUND_ROWS
+        e.id,
+        e.event_name,
+        e.event_type,
+        e.event_description,
+        e.start_event,
+        e.end_event,
+        e.staff,
+        e.location,
+        c.name AS case_name,
+        c.case_id,
+        (
+          SELECT GROUP_CONCAT(CONCAT(s.first_name, ' ', s.last_name) SEPARATOR ', ')
+          FROM staff s
+          WHERE FIND_IN_SET(s.staff_id, e.staff)
+        ) AS staff_names
+      FROM case_events e
+      LEFT JOIN cases c ON CAST(c.case_id AS CHAR) = CAST(e.case_id AS CHAR)
+      WHERE CAST(e.case_id AS CHAR) IN (${placeholders})
+      ${dateCondition}
+      ORDER BY e.start_event ASC
+      LIMIT ? OFFSET ?
+      `,
+      [...caseIds, ...dateParams, limit, offset]
+    );
+
+    const [[{ "FOUND_ROWS()": totalEvents }]] = await db
+      .promise()
+      .query("SELECT FOUND_ROWS()");
+
+    const formattedEvents = (rows || []).map((event) => ({
+      id: event.id,
+      title: event.event_name || "Unnamed Event",
+      description: event.event_description || "No description available",
+      start: event.start_event,
+      end: event.end_event,
+      case_name: event.case_name || "No associated case",
+      case_id: event.case_id,
+      event_type: event.event_type,
+      staff: event.staff,
+      staff_name: event.staff_names || "No staff assigned",
+      location: event.location || "No location",
+    }));
+
+    res.json({ events: formattedEvents, totalEvents, page, limit });
+  } catch (err) {
+    console.error("Error fetching company events:", err);
+    res.status(500).send("Error fetching company events.");
+  }
+});
 // 📘 GET /companies/:id
 router.get("/companies/:id", (req, res) => {
   const id = req.params.id;
@@ -236,6 +508,22 @@ router.post("/companies/:id/cases", (req, res) => {
   });
 });
 
+// POST /companies/:id/clients – Link a company to a client
+router.post("/companies/:id/clients", (req, res) => {
+  const companyId = req.params.id;
+  const { client_id } = req.body;
+
+  if (!client_id) {
+    return res.status(400).send("client_id is required.");
+  }
+
+  const sql =
+    "INSERT IGNORE INTO company_client (company_id, client_id) VALUES (?, ?)";
+  db.query(sql, [companyId, client_id], (err) => {
+    if (err) return res.status(500).send("Error linking company to client.");
+    res.status(201).json({ message: "Company linked to client." });
+  });
+});
 // DELETE /companies/:id/cases/:caseId – Unlink a company from a case
 router.delete("/companies/:id/cases/:caseId", (req, res) => {
   const { id, caseId } = req.params;
@@ -245,6 +533,17 @@ router.delete("/companies/:id/cases/:caseId", (req, res) => {
     if (err) return res.status(500).send("Error unlinking company from case.");
     if (!result.affectedRows) return res.status(404).send("Link not found.");
     res.send("Company unlinked from case.");
+  });
+});
+// DELETE /companies/:id/clients/:clientId – Unlink a company from a client
+router.delete("/companies/:id/clients/:clientId", (req, res) => {
+  const { id, clientId } = req.params;
+
+  const sql = "DELETE FROM company_client WHERE company_id = ? AND client_id = ?";
+  db.query(sql, [id, clientId], (err, result) => {
+    if (err) return res.status(500).send("Error unlinking company from client.");
+    if (!result.affectedRows) return res.status(404).send("Link not found.");
+    res.send("Company unlinked from client.");
   });
 });
 
