@@ -9531,6 +9531,316 @@ router.post('/trial_letter_to_client/queue', async (req, res) => {
 
 
 // ==============================
+// Turndown Letter Warranty (turndown_letter_warranty) CRUD & UiPath queue
+// ==============================
+
+// Fetch Turndown Letter Warranty data
+router.get('/turndown_letter_warranty', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) {
+    console.log('🔍 Fetch Turndown Letter Warranty called with caseId:', caseId);
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+  console.log('🔍 Fetch Turndown Letter Warranty called with caseId:', caseId);
+  try {
+    const [rows] = await db.promisePool.execute(
+      `SELECT
+         client_name,
+         plaintiff,
+         premises,
+         client_email,
+         case_name,
+         attorney_email,
+         paralegal_email,
+         uid,
+         uipath_uid,
+         status,
+         created_at,
+         updated_at
+       FROM turndown_letter_warranty
+       WHERE case_id = ?`,
+      [caseId]
+    );
+    console.log('🔍 Turndown Letter Warranty query returned rows:', rows);
+    const record = rows.find(r => String(r.status).toLowerCase() === 'pending') || (rows.length ? rows[0] : null);
+    console.log('🔍 Selected Turndown Letter Warranty record to return:', record);
+    return res.json({ success: true, data: record });
+  } catch (err) {
+    console.error('❌  Fetch Turndown Letter Warranty data error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Upsert Turndown Letter Warranty data
+router.post('/turndown_letter_warranty', async (req, res) => {
+  console.log('📥 POST /automations/turndown_letter_warranty body:', req.body);
+  const uid =
+    (req.body.uid ?? req.headers['x-user-uid']) ||
+    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'));
+  console.log('🆔 Turndown Letter Warranty upsert uid:', uid);
+
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const client_name = req.body.client_name ?? null;
+  const plaintiff = req.body.plaintiff ?? null;
+  const case_name = req.body.case_name ?? null;
+  const premises = req.body.premises ?? null;
+  const client_email = req.body.client_email ?? null;
+  const attorney_email = req.body.attorney_email ?? null;
+  const paralegal_email = req.body.paralegal_email ?? null;
+
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  try {
+    await db.promisePool.execute(
+      `INSERT INTO turndown_letter_warranty (
+         case_id,
+         uid,
+         client_name,
+         plaintiff,
+         case_name,
+         premises,
+         client_email,
+         attorney_email,
+         paralegal_email,
+         status,
+         created_at,
+         updated_at
+       ) VALUES (
+         ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW()
+       )
+       ON DUPLICATE KEY UPDATE
+         uid                   = VALUES(uid),
+         client_name           = VALUES(client_name),
+         plaintiff             = VALUES(plaintiff),
+         case_name             = VALUES(case_name),
+         premises              = VALUES(premises),
+         client_email          = VALUES(client_email),
+         attorney_email        = VALUES(attorney_email),
+         paralegal_email       = VALUES(paralegal_email),
+         status                = VALUES(status),
+         updated_at            = NOW()
+      `,
+      [
+        caseId,
+        uid,
+        client_name,
+        plaintiff,
+        case_name,
+        premises,
+        client_email,
+        attorney_email,
+        paralegal_email
+      ]
+    );
+
+    return res.json({ success: true, message: 'Turndown Letter Warranty data saved' });
+  } catch (err) {
+    console.error('❌  Turndown Letter Warranty data save error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Update Turndown Letter Warranty status
+router.put('/turndown_letter_warranty', async (req, res) => {
+  try {
+    const caseId = req.body.caseId ?? req.body.case_id ?? req.query.caseId ?? req.query.case_id ?? null;
+    let raw = (req.body.status ?? req.query.status ?? '').toString().trim().toLowerCase();
+
+    if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+    if (!raw) return res.status(400).json({ success: false, message: 'Missing status' });
+
+    const MAP = { complete: 'completed', in_progress: 'loading' };
+    const status = MAP[raw] ?? raw;
+    const ALLOWED = new Set(['pending', 'loading', 'completed', 'failed']);
+    if (!ALLOWED.has(status)) {
+      return res.status(400).json({ success: false, message: `Invalid status value: ${raw}. Allowed: ${[...ALLOWED].join(', ')}` });
+    }
+
+    const [result] = await db.promisePool.execute(
+      'UPDATE turndown_letter_warranty SET status = ? WHERE case_id = ?',
+      [status, caseId]
+    );
+
+    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Case not found' });
+
+    console.log('✅ Updated Turndown Letter Warranty status for caseId', caseId, 'to', status);
+    return res.json({ success: true, message: 'Turndown Letter Warranty status updated', status });
+  } catch (err) {
+    console.error('❌  Update Turndown Letter Warranty status error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Alias for status update
+router.put('/turndown_letter_warranty/status', async (req, res) => {
+  try {
+    const caseId = req.body.caseId ?? req.body.case_id ?? req.query.caseId ?? req.query.case_id ?? null;
+    let raw = (req.body.status ?? req.query.status ?? '').toString().trim().toLowerCase();
+
+    if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+    if (!raw) return res.status(400).json({ success: false, message: 'Missing status' });
+
+    const MAP = { complete: 'completed', in_progress: 'loading' };
+    const status = MAP[raw] ?? raw;
+    const ALLOWED = new Set(['pending', 'loading', 'completed', 'failed']);
+    if (!ALLOWED.has(status)) {
+      return res.status(400).json({ success: false, message: `Invalid status value: ${raw}. Allowed: ${[...ALLOWED].join(', ')}` });
+    }
+
+    const [result] = await db.promisePool.execute(
+      'UPDATE turndown_letter_warranty SET status = ? WHERE case_id = ?',
+      [status, caseId]
+    );
+
+    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Case not found' });
+
+    console.log('✅ Updated Turndown Letter Warranty status for caseId', caseId, 'to', status);
+    return res.json({ success: true, message: 'Turndown Letter Warranty status updated', status });
+  } catch (err) {
+    console.error('❌  Update Turndown Letter Warranty status error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Delete Turndown Letter Warranty entries
+router.delete('/turndown_letter_warranty', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute('DELETE FROM turndown_letter_warranty WHERE case_id = ?', [caseId]);
+    return res.status(200).json({ success: true, message: 'Turndown Letter Warranty entries deleted' });
+  } catch (err) {
+    console.error('❌  Delete Turndown Letter Warranty entries error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.delete('/turndown_letter_warranty/:caseId', async (req, res) => {
+  const caseId = req.params.caseId;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute('DELETE FROM turndown_letter_warranty WHERE case_id = ?', [caseId]);
+    return res.status(200).json({ success: true, message: 'Turndown Letter Warranty entries deleted' });
+  } catch (err) {
+    console.error('❌  Delete Turndown Letter Warranty entries by param error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Trigger Turndown Letter Warranty via n8n
+router.post('/turndown_letter_warranty/trigger', async (req, res) => {
+  try {
+    const callerIp = (req.headers['x-forwarded-for']?.split(',')[0] || req.ip || '').toString().trim();
+    const ua = req.headers['user-agent'];
+    console.log('📥 Turndown Letter Warranty /turndown_letter_warranty/trigger invoked', {
+      ip: callerIp,
+      ua,
+      path: req.originalUrl,
+      method: req.method,
+      hasApiKey: Boolean(req.headers['x-api-key']),
+      xForwardedFor: req.headers['x-forwarded-for'],
+      body: req.body,
+    });
+  } catch (logErr) {
+    console.warn('⚠️ Failed to log Turndown Letter Warranty trigger caller info:', logErr.message);
+  }
+
+  const { caseId } = req.body;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  const n8nUrl = 'https://n8n.louislawgroup.com/webhook/Turndown-letter-Warranty';
+  console.log('▶️  Triggering Turndown Letter Warranty webhook:', n8nUrl, 'with caseId:', caseId);
+
+  try {
+    const response = await axios.post(n8nUrl, { caseId });
+    console.log('✅  Turndown Letter Warranty automation triggered:', response.status, response.data);
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    console.error('❌  Turndown Letter Warranty trigger error:', err.response?.data || err.message);
+    return res
+      .status(500)
+      .json({ success: false, message: 'Failed to trigger Turndown Letter Warranty automation', details: err.message });
+  }
+});
+
+// Re-run Turndown Letter Warranty: clear existing and trigger again via n8n
+router.post('/turndown_letter_warranty/rerun', async (req, res) => {
+  const { caseId } = req.body;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  try {
+    await db.promisePool.execute('DELETE FROM turndown_letter_warranty WHERE case_id = ?', [caseId]);
+    console.log('🗑️ Deleted existing Turndown Letter Warranty entries for caseId', caseId);
+
+    const n8nUrl = 'https://n8n.louislawgroup.com/webhook/turn-down-warranty';
+    console.log('▶️ Re-triggering Turndown Letter Warranty webhook:', n8nUrl, 'with caseId:', caseId);
+    const response = await axios.post(n8nUrl, { caseId });
+    console.log('✅  Re-run Turndown Letter Warranty automation triggered:', response.status);
+
+    return res.json({ success: true, message: 'Turndown Letter Warranty re-run triggered' });
+  } catch (err) {
+    console.error('❌  Turndown Letter Warranty re-run error:', err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Submit Turndown Letter Warranty to UiPath via n8n webhook
+router.post('/turndown_letter_warranty/queue', async (req, res) => {
+  const {
+    caseId,
+    uid,
+    client_name,
+    plaintiff,
+    case_name,
+    premises,
+    client_email,
+    attorney_email,
+    paralegal_email
+  } = req.body;
+
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+
+  try {
+    await db.promisePool.execute(
+      'UPDATE turndown_letter_warranty SET status = ?, uipath_uid = ?, updated_at = NOW() WHERE case_id = ?',
+      ['loading', uid ?? null, caseId]
+    );
+    console.log('💾 Turndown Letter Warranty status set to loading for caseId', caseId, 'by user', uid);
+  } catch (e) {
+    console.warn('⚠️ Failed to set loading status before queueing Turndown Letter Warranty:', e.message);
+  }
+
+  const n8nUrl = 'https://n8n.louislawgroup.com/webhook/Turndown-letter-Warranty-Email';
+  console.log('▶️  Submitting Turndown Letter Warranty to UiPath via n8n webhook:', n8nUrl, 'with caseId:', caseId);
+
+  try {
+    const payload = {
+      caseId,
+      client_name,
+      plaintiff,
+      case_name,
+      premises,
+      client_email,
+      attorney_email,
+      paralegal_email,
+      uid
+    };
+
+    const response = await axios.post(n8nUrl, payload);
+    console.log('✅ Turndown Letter Warranty UiPath submission triggered:', response.status, response.data);
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    console.error('❌ Turndown Letter Warranty UiPath submission error for caseId', caseId, ':', err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: 'Failed to submit Turndown Letter Warranty to UiPath', details: err.message });
+  }
+});
+// ==============================
 // Turndown Letter (Employment) (employment_turndown) CRUD & UiPath queue
 // ==============================
 
