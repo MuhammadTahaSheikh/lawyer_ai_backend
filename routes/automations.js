@@ -10631,5 +10631,279 @@ router.post('/wriretapping_notice_letter/queue', async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to submit Wriretapping Notice Letter to UiPath', details: err.message });
   }
 });
+// ==============================
+// Presuit Demand (presuit_demand) CRUD & Webhook
+// ==============================
+
+
+
+// Fetch Presuit Demand data
+router.get('/presuit_demand', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) {
+    console.log('🔍 Fetch Presuit Demand called with caseId:', caseId);
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+  console.log('🔍 Fetch Presuit Demand called with caseId:', caseId);
+  try {
+    const [rows] = await db.promisePool.execute(
+      `SELECT
+         uid,
+         status,
+         defendant_email,
+         attorney_email,
+         paralegal_email,
+         oc_email,
+         type_of_loss,
+         pa_estimate,
+         deductible,
+         prior_payment,
+         aob_dtp_invoices,
+         date_of_loss,
+         claim_number,
+         policy_number,
+         premises,
+         ai_response,
+         created_at,
+         updated_at
+       FROM presuit_demand
+       WHERE case_id = ?`,
+      [caseId]
+    );
+    const record = rows.find(r => String(r.status).toLowerCase() === 'pending') || (rows.length ? rows[0] : null);
+    if (!record) {
+      console.log('🔍 No Presuit Demand record found for caseId:', caseId);
+      return res.json({ success: true, data: null });
+    }
+    return res.json({ success: true, data: record });
+  } catch (err) {
+    console.error('❌  Fetch Presuit Demand data error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET by case ID in path (for n8n: GET /automations/presuit-demand/cases/:caseId)
+router.get('/presuit-demand/cases/:caseId', async (req, res) => {
+  const caseId = req.params.caseId;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+  try {
+    const [rows] = await db.promisePool.execute(
+      `SELECT
+         uid,
+         status,
+         defendant_email,
+         attorney_email,
+         paralegal_email,
+         oc_email,
+         type_of_loss,
+         pa_estimate,
+         deductible,
+         prior_payment,
+         aob_dtp_invoices,
+         date_of_loss,
+         claim_number,
+         policy_number,
+         premises,
+         ai_response,
+         created_at,
+         updated_at
+       FROM presuit_demand
+       WHERE case_id = ?`,
+      [caseId]
+    );
+    const record = rows.find(r => String(r.status).toLowerCase() === 'pending') || (rows.length ? rows[0] : null);
+    if (!record) return res.json({ success: true, data: null });
+    return res.json({ success: true, data: record });
+  } catch (err) {
+    console.error('❌  Fetch Presuit Demand data error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Upsert Presuit Demand data
+router.post('/presuit_demand', async (req, res) => {
+  console.log('📥 POST /automations/presuit_demand body:', req.body);
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const uid = req.body.uid ?? null;
+  const status = req.body.status ?? 'pending';
+  const defendantEmail = req.body.defendant_email ?? null;
+  const attorneyEmail = req.body.attorney_email ?? null;
+  const paralegalEmail = req.body.paralegal_email ?? null;
+  const ocEmail = req.body.oc_email ?? null;
+  const typeOfLoss = req.body.type_of_loss ?? null;
+  const paEstimate = req.body.pa_estimate ?? null;
+  const deductible = req.body.deductible ?? null;
+  const priorPayment = req.body.prior_payment ?? null;
+  const aobDtpInvoices = req.body.aob_dtp_invoices ?? null;
+  const dateOfLoss = req.body.date_of_loss ?? null;
+  const claimNumber = req.body.claim_number ?? null;
+  const policyNumber = req.body.policy_number ?? null;
+  const premises = req.body.premises ?? null;
+  const aiResponse = req.body.ai_response ?? null;
+
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+
+  try {
+    await db.promisePool.execute(
+      `INSERT INTO presuit_demand (
+         case_id, uid, status, defendant_email, attorney_email, paralegal_email, oc_email,
+         type_of_loss, pa_estimate, deductible, prior_payment, aob_dtp_invoices,
+         date_of_loss, claim_number, policy_number, premises, ai_response, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+       ON DUPLICATE KEY UPDATE
+         uid = VALUES(uid),
+         status = VALUES(status),
+         defendant_email = VALUES(defendant_email),
+         attorney_email = VALUES(attorney_email),
+         paralegal_email = VALUES(paralegal_email),
+         oc_email = VALUES(oc_email),
+         type_of_loss = VALUES(type_of_loss),
+         pa_estimate = VALUES(pa_estimate),
+         deductible = VALUES(deductible),
+         prior_payment = VALUES(prior_payment),
+         aob_dtp_invoices = VALUES(aob_dtp_invoices),
+         date_of_loss = VALUES(date_of_loss),
+         claim_number = VALUES(claim_number),
+         policy_number = VALUES(policy_number),
+         premises = VALUES(premises),
+         ai_response = VALUES(ai_response),
+         updated_at = NOW()`,
+      [caseId, uid, status, defendantEmail, attorneyEmail, paralegalEmail, ocEmail, typeOfLoss, paEstimate, deductible, priorPayment, aobDtpInvoices, dateOfLoss, claimNumber, policyNumber, premises, aiResponse]
+    );
+    return res.json({ success: true, message: 'Presuit Demand data saved' });
+  } catch (err) {
+    console.error('❌  Save Presuit Demand data error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Trigger Presuit Demand phase 2 via n8n (Save phase 2 fields)
+router.post('/presuit_demand/phase-2-trigger', async (req, res) => {
+  const { caseId } = req.body || {};
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  const n8nUrl = process.env.N8N_PRESUIT_DEMAND_PHASE_2_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/presuit-demand-2';
+  try {
+    const response = await axios.post(n8nUrl, req.body, { headers: { 'Content-Type': 'application/json' }, timeout: 30000 });
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    const status = err.response?.status || 500;
+    const details = err.response?.data || err.message;
+    console.error('❌  Presuit Demand phase 2 trigger error:', details);
+    return res.status(status).json({ success: false, message: 'Failed to trigger Presuit Demand phase 2 webhook', details });
+  }
+});
+
+// Update Presuit Demand status
+const updatePresuitDemandStatus = async (req, res) => {
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const status = req.body.status ?? 'pending';
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute(`UPDATE presuit_demand SET status = ?, updated_at = NOW() WHERE case_id = ?`, [status, caseId]);
+    return res.json({ success: true, message: 'Presuit Demand status updated' });
+  } catch (err) {
+    console.error('❌  Update Presuit Demand status error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+router.put('/presuit_demand', updatePresuitDemandStatus);
+router.post('/presuit_demand', updatePresuitDemandStatus);
+router.put('/presuit-demand', updatePresuitDemandStatus);
+router.post('/presuit-demand', updatePresuitDemandStatus);
+
+// Delete Presuit Demand record
+router.delete('/presuit_demand', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute('DELETE FROM presuit_demand WHERE case_id = ?', [caseId]);
+    return res.status(200).json({ success: true, message: 'Presuit Demand entries deleted' });
+  } catch (err) {
+    console.error('❌ Delete Presuit Demand error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Trigger Presuit Demand via n8n (phase 1)
+router.post('/presuit_demand/trigger', async (req, res) => {
+  const { caseId, documents = [], uid } = req.body;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  const n8nUrl = process.env.N8N_PRESUIT_DEMAND_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/presuit-demand-1';
+  try {
+    await db.promisePool.execute(
+      `INSERT INTO presuit_demand (case_id, uid, status, created_at, updated_at)
+       VALUES (?, ?, 'pending', NOW(), NOW())
+       ON DUPLICATE KEY UPDATE status = 'pending', uid = VALUES(uid), updated_at = NOW()`,
+      [caseId, uid || null]
+    );
+    const response = await axios.post(n8nUrl, { caseId, documents: documents || [] });
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    try { await db.promisePool.execute('UPDATE presuit_demand SET status = ?, updated_at = NOW() WHERE case_id = ?', ['failed', caseId]); } catch {}
+    return res.status(500).json({ success: false, message: 'Failed to trigger Presuit Demand automation', details: err.message });
+  }
+});
+
+// Send webhook with selected documents
+router.post('/presuit_demand/webhook', async (req, res) => {
+  const { caseId, uid, documents = [] } = req.body;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  const n8nUrl = process.env.N8N_PRESUIT_DEMAND_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/presuit-demand';
+  try {
+    try { await db.promisePool.execute('UPDATE presuit_demand SET status = ?, updated_at = NOW() WHERE case_id = ?', ['loading', caseId]); } catch {}
+    const response = await axios.post(n8nUrl, { caseId, uid: uid || null, documents: documents || [] });
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    try { await db.promisePool.execute('UPDATE presuit_demand SET status = ?, updated_at = NOW() WHERE case_id = ?', ['failed', caseId]); } catch {}
+    return res.status(500).json({ success: false, message: 'Failed to send Presuit Demand webhook', details: err.message });
+  }
+});
+
+// Send selected documents to UiPath via n8n (for Presuit Demand)
+router.post('/presuit_demand/ui-path-trigger', async (req, res) => {
+  const { caseId, documents = [] } = req.body;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  if (!Array.isArray(documents) || documents.length === 0) {
+    return res.status(400).json({ success: false, message: 'documents array is required and must not be empty' });
+  }
+  const n8nUrl = process.env.N8N_PRESUIT_DEMAND_UIPATH_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/presuit-demand-3';
+  try {
+    try {
+      await db.promisePool.execute(
+        'UPDATE presuit_demand SET status = ?, updated_at = NOW() WHERE case_id = ?',
+        ['loading', caseId]
+      );
+    } catch {}
+    const response = await axios.post(n8nUrl, req.body, { headers: { 'Content-Type': 'application/json' }, timeout: 30000 });
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    try {
+      await db.promisePool.execute(
+        'UPDATE presuit_demand SET status = ?, updated_at = NOW() WHERE case_id = ?',
+        ['failed', caseId]
+      );
+    } catch {}
+    const status = err.response?.status || 500;
+    const details = err.response?.data || err.message;
+    return res.status(status).json({ success: false, message: 'Failed to trigger Presuit Demand UiPath webhook', details });
+  }
+});
+
+// Re-run Presuit Demand
+router.post('/presuit_demand/rerun', async (req, res) => {
+  const { caseId, uid } = req.body;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute(`UPDATE presuit_demand SET status = 'pending', uid = ?, updated_at = NOW() WHERE case_id = ?`, [uid || null, caseId]);
+    const n8nUrl = process.env.N8N_PRESUIT_DEMAND_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/presuit-demand';
+    const response = await axios.post(n8nUrl, { caseId });
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to re-run Presuit Demand automation', details: err.message });
+  }
+});
 
 module.exports = router;
