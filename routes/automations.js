@@ -10906,4 +10906,348 @@ router.post('/presuit_demand/rerun', async (req, res) => {
   }
 });
 
+// ==============================
+// Estimate & EMS Invoices Submission (estimate_ems_invoices_submission) CRUD & UiPath queue
+// ==============================
+
+// Fetch Estimate & EMS Invoices Submission data
+router.get('/estimate_ems_invoices_submission', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) {
+    console.log('🔍 Fetch Estimate & EMS Invoices Submission called with caseId:', caseId);
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+  console.log('🔍 Fetch Estimate & EMS Invoices Submission called with caseId:', caseId);
+  try {
+    const [rows] = await db.promisePool.execute(
+      `SELECT
+         plaintiff,
+         claim_number,
+         policy_number,
+         premises,
+         date_of_loss,
+         loss_type,
+         insurance_company,
+         client_phone,
+         send_to,
+         public_adjuster,
+         uid,
+         uipath_uid,
+         rerun_uid,
+         firsttrigger_uid,
+         status,
+         created_at,
+         updated_at
+       FROM estimate_ems_invoices_submission
+       WHERE case_id = ?`,
+      [caseId]
+    );
+    const record = rows.find(r => String(r.status).toLowerCase() === 'pending') || (rows.length ? rows[0] : null);
+    return res.json({ success: true, data: record });
+  } catch (err) {
+    console.error('❌  Fetch Estimate & EMS Invoices Submission data error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Upsert Estimate & EMS Invoices Submission data
+router.post('/estimate_ems_invoices_submission', async (req, res) => {
+  console.log('📥 POST /automations/estimate_ems_invoices_submission body:', req.body);
+  const uid =
+    (req.body.uid ?? req.headers['x-user-uid']) ||
+    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'));
+
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const plaintiff = req.body.plaintiff ?? null;
+  const claim_number = req.body.claim_number ?? null;
+  const policy_number = req.body.policy_number ?? null;
+  const premises = req.body.premises ?? null;
+  const date_of_loss = req.body.date_of_loss ?? null;
+  const loss_type = req.body.loss_type ?? null;
+  const insurance_company = req.body.insurance_company ?? null;
+  const client_phone = req.body.client_phone ?? null;
+  const send_to = req.body.send_to ?? null;
+  const public_adjuster = req.body.public_adjuster ?? null;
+
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  try {
+    await db.promisePool.execute(
+      `INSERT INTO estimate_ems_invoices_submission (
+         case_id,
+         uid,
+         plaintiff,
+         claim_number,
+         policy_number,
+         premises,
+         date_of_loss,
+         loss_type,
+         insurance_company,
+         client_phone,
+         send_to,
+         public_adjuster,
+         status,
+         created_at,
+         updated_at
+       ) VALUES (
+         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW()
+       )
+       ON DUPLICATE KEY UPDATE
+         uid                  = VALUES(uid),
+         plaintiff            = VALUES(plaintiff),
+         claim_number         = VALUES(claim_number),
+         policy_number        = VALUES(policy_number),
+         premises             = VALUES(premises),
+         date_of_loss         = VALUES(date_of_loss),
+         loss_type            = VALUES(loss_type),
+         insurance_company    = VALUES(insurance_company),
+         client_phone         = VALUES(client_phone),
+         send_to              = VALUES(send_to),
+         public_adjuster      = VALUES(public_adjuster),
+         updated_at           = NOW()
+      `,
+      [
+        caseId,
+        uid,
+        plaintiff,
+        claim_number,
+        policy_number,
+        premises,
+        date_of_loss,
+        loss_type,
+        insurance_company,
+        client_phone,
+        send_to,
+        public_adjuster
+      ]
+    );
+
+    return res.json({ success: true, message: 'Estimate & EMS Invoices Submission data saved' });
+  } catch (err) {
+    console.error('❌  Estimate & EMS Invoices Submission data save error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Update Estimate & EMS Invoices Submission status
+router.put('/estimate_ems_invoices_submission', async (req, res) => {
+  try {
+    const caseId = req.body.caseId ?? req.body.case_id ?? req.query.caseId ?? req.query.case_id ?? null;
+    let raw = (req.body.status ?? req.query.status ?? '').toString().trim().toLowerCase();
+
+    if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+    if (!raw) return res.status(400).json({ success: false, message: 'Missing status' });
+
+    const MAP = { complete: 'completed', in_progress: 'loading' };
+    const status = MAP[raw] ?? raw;
+    const ALLOWED = new Set(['pending', 'loading', 'completed', 'failed']);
+    if (!ALLOWED.has(status)) {
+      return res.status(400).json({ success: false, message: `Invalid status value: ${raw}. Allowed: ${[...ALLOWED].join(', ')}` });
+    }
+
+    const [result] = await db.promisePool.execute(
+      'UPDATE estimate_ems_invoices_submission SET status = ? WHERE case_id = ?',
+      [status, caseId]
+    );
+
+    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Case not found' });
+
+    console.log('✅ Updated Estimate & EMS Invoices Submission status for caseId', caseId, 'to', status);
+    return res.json({ success: true, message: 'Estimate & EMS Invoices Submission status updated', status });
+  } catch (err) {
+    console.error('❌  Update Estimate & EMS Invoices Submission status error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Alias for status update
+router.put('/estimate_ems_invoices_submission/status', async (req, res) => {
+  try {
+    const caseId = req.body.caseId ?? req.body.case_id ?? req.query.caseId ?? req.query.case_id ?? null;
+    let raw = (req.body.status ?? req.query.status ?? '').toString().trim().toLowerCase();
+
+    if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+    if (!raw) return res.status(400).json({ success: false, message: 'Missing status' });
+
+    const MAP = { complete: 'completed', in_progress: 'loading' };
+    const status = MAP[raw] ?? raw;
+    const ALLOWED = new Set(['pending', 'loading', 'completed', 'failed']);
+    if (!ALLOWED.has(status)) {
+      return res.status(400).json({ success: false, message: `Invalid status value: ${raw}. Allowed: ${[...ALLOWED].join(', ')}` });
+    }
+
+    const [result] = await db.promisePool.execute(
+      'UPDATE estimate_ems_invoices_submission SET status = ? WHERE case_id = ?',
+      [status, caseId]
+    );
+
+    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Case not found' });
+
+    console.log('✅ Updated Estimate & EMS Invoices Submission status for caseId', caseId, 'to', status);
+    return res.json({ success: true, message: 'Estimate & EMS Invoices Submission status updated', status });
+  } catch (err) {
+    console.error('❌  Update Estimate & EMS Invoices Submission status error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Delete Estimate & EMS Invoices Submission entries
+router.delete('/estimate_ems_invoices_submission', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute('DELETE FROM estimate_ems_invoices_submission WHERE case_id = ?', [caseId]);
+    return res.status(200).json({ success: true, message: 'Estimate & EMS Invoices Submission entries deleted' });
+  } catch (err) {
+    console.error('❌  Delete Estimate & EMS Invoices Submission entries error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.delete('/estimate_ems_invoices_submission/:caseId', async (req, res) => {
+  const caseId = req.params.caseId;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute('DELETE FROM estimate_ems_invoices_submission WHERE case_id = ?', [caseId]);
+    return res.status(200).json({ success: true, message: 'Estimate & EMS Invoices Submission entries deleted' });
+  } catch (err) {
+    console.error('❌  Delete Estimate & EMS Invoices Submission entries by param error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Trigger Estimate & EMS Invoices Submission via n8n
+router.post('/estimate_ems_invoices_submission/trigger', async (req, res) => {
+  const { caseId, uid } = req.body;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  const n8nUrl =
+    process.env.N8N_ESTIMATE_EMS_INVOICES_SUBMISSION_TRIGGER_URL ||
+    process.env.N8N_ESTIMATE_REQUEST_FORM_TRIGGER_URL ||
+    'https://n8n.louislawgroup.com/webhook/Estimate-EMS-invoices';
+
+  try {
+    if (uid) {
+      try {
+        await db.promisePool.execute(
+          'UPDATE estimate_ems_invoices_submission SET firsttrigger_uid = ? WHERE case_id = ?',
+          [uid, caseId]
+        );
+      } catch (e) {
+        console.warn('⚠️ Failed to store firsttrigger_uid for Estimate & EMS Invoices Submission:', e.message);
+      }
+    }
+
+    const response = await axios.post(n8nUrl, { caseId });
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    console.error('❌  Estimate & EMS Invoices Submission trigger error:', err.response?.data || err.message);
+    return res
+      .status(500)
+      .json({ success: false, message: 'Failed to trigger Estimate & EMS Invoices Submission automation', details: err.message });
+  }
+});
+
+// Re-run Estimate & EMS Invoices Submission: clear existing and trigger again via n8n
+router.post('/estimate_ems_invoices_submission/rerun', async (req, res) => {
+  const { caseId, uid } = req.body;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  const n8nUrl =
+    process.env.N8N_ESTIMATE_EMS_INVOICES_SUBMISSION_TRIGGER_URL ||
+    process.env.N8N_ESTIMATE_REQUEST_FORM_TRIGGER_URL ||
+    'https://n8n.louislawgroup.com/webhook/request-form';
+
+  try {
+    if (uid) {
+      try {
+        await db.promisePool.execute(
+          'UPDATE estimate_ems_invoices_submission SET rerun_uid = ? WHERE case_id = ?',
+          [uid, caseId]
+        );
+      } catch (e) {
+        console.warn('⚠️ Failed to store rerun_uid for Estimate & EMS Invoices Submission:', e.message);
+      }
+    }
+
+    await db.promisePool.execute('DELETE FROM estimate_ems_invoices_submission WHERE case_id = ?', [caseId]);
+    const response = await axios.post(n8nUrl, { caseId });
+
+    return res.json({ success: true, message: 'Estimate & EMS Invoices Submission re-run triggered', data: response.data });
+  } catch (err) {
+    console.error('❌  Estimate & EMS Invoices Submission re-run error:', err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Submit Estimate & EMS Invoices Submission to UiPath via n8n webhook
+router.post('/estimate_ems_invoices_submission/queue', async (req, res) => {
+  const {
+    caseId,
+    uid,
+    plaintiff,
+    claim_number,
+    policy_number,
+    premises,
+    date_of_loss,
+    loss_type,
+    insurance_company,
+    client_phone,
+    send_to,
+    public_adjuster,
+    documents
+  } = req.body;
+
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+
+  const uipath_uid = uid ?? null;
+  try {
+    await db.promisePool.execute(
+      'UPDATE estimate_ems_invoices_submission SET status = ?, uipath_uid = ?, updated_at = NOW() WHERE case_id = ?',
+      ['loading', uipath_uid, caseId]
+    );
+  } catch (e) {
+    console.warn('⚠️ Failed to set loading status before queueing Estimate & EMS Invoices Submission:', e.message);
+  }
+
+  const n8nUrl =
+    process.env.N8N_ESTIMATE_EMS_INVOICES_SUBMISSION_QUEUE_URL ||
+    process.env.N8N_ESTIMATE_REQUEST_FORM_QUEUE_URL ||
+    'https://n8n.louislawgroup.com/webhook/Estimate-EMS-invoices-email';
+
+  try {
+    const payload = {
+      caseId,
+      plaintiff,
+      claim_number,
+      policy_number,
+      premises,
+      date_of_loss,
+      loss_type,
+      insurance_company,
+      client_phone,
+      send_to,
+      public_adjuster,
+      documents: Array.isArray(documents) ? documents : [],
+      uid,
+      uipath_uid
+    };
+
+    const response = await axios.post(n8nUrl, payload);
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    console.error('❌ Estimate & EMS Invoices Submission UiPath submission error for caseId', caseId, ':', err.response?.data || err.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to submit Estimate & EMS Invoices Submission to UiPath',
+      details: err.message
+    });
+  }
+});
 module.exports = router;
