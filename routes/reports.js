@@ -1018,4 +1018,91 @@ router.delete("/saved_reports/:id", async (req, res) => {
   }
 });
 
+// GET /email_lists_by_practice_area
+// Returns deduplicated emails grouped by practice area for:
+// 1) current clients (open cases),
+// 2) former clients (closed cases),
+// 3) leads without retainer (no retainer-related case stage).
+router.get("/email_lists_by_practice_area", (req, res) => {
+  // Optional: override which case_stage text implies a retainer exists.
+  const retainerStageKeyword = String(req.query.retainer_stage_keyword || "retainer").trim();
+
+  const query = `
+    SELECT
+      COALESCE(NULLIF(TRIM(c.practice_area), ''), '(Unspecified)') AS practice_area,
+      TRIM(c.clients_email) AS email,
+      COALESCE(c.case_stage, '') AS case_stage,
+      COALESCE(c.closed_date, '') AS closed_date
+    FROM cases c
+    WHERE c.clients_email IS NOT NULL
+      AND TRIM(c.clients_email) != ''
+  `;
+
+  db.query(query, (err, rows) => {
+    if (err) {
+      console.error("Error fetching email lists by practice area:", err);
+      return res.status(500).json({ error: "Error fetching email lists by practice area" });
+    }
+
+    const grouped = {};
+    const keyword = retainerStageKeyword.toLowerCase();
+
+    const getBucket = (area) => {
+      if (!grouped[area]) {
+        grouped[area] = {
+          current_clients: new Set(),
+          former_clients: new Set(),
+          leads_without_retainer: new Set()
+        };
+      }
+      return grouped[area];
+    };
+
+    (rows || []).forEach((row) => {
+      const practiceArea = row.practice_area || "(Unspecified)";
+      const email = String(row.email || "").toLowerCase();
+      if (!email) return;
+
+      const caseStage = String(row.case_stage || "").toLowerCase();
+      const closedDate = String(row.closed_date || "").trim();
+      const isClosed = closedDate !== "";
+      const hasRetainer = keyword ? caseStage.includes(keyword) : false;
+
+      const bucket = getBucket(practiceArea);
+
+      if (isClosed) {
+        bucket.former_clients.add(email);
+      } else {
+        bucket.current_clients.add(email);
+      }
+
+      if (!hasRetainer) {
+        bucket.leads_without_retainer.add(email);
+      }
+    });
+
+    const byPracticeArea = Object.keys(grouped)
+      .sort((a, b) => a.localeCompare(b))
+      .map((practice_area) => {
+        const bucket = grouped[practice_area];
+        const currentClients = Array.from(bucket.current_clients).sort();
+        const formerClients = Array.from(bucket.former_clients).sort();
+        const leadsWithoutRetainer = Array.from(bucket.leads_without_retainer).sort();
+
+        return {
+          practice_area,
+          current_clients: currentClients,
+          former_clients: formerClients,
+          leads_without_retainer: leadsWithoutRetainer,
+          counts: {
+            current_clients: currentClients.length,
+            former_clients: formerClients.length,
+            leads_without_retainer: leadsWithoutRetainer.length
+          }
+        };
+      });
+
+    res.json({ byPracticeArea });
+  });
+});
 module.exports = router;
