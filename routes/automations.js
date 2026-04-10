@@ -11250,4 +11250,293 @@ router.post('/estimate_ems_invoices_submission/queue', async (req, res) => {
     });
   }
 });
+
+
+
+// ==============================
+// SSDI E-Sign (ssdi_esign) CRUD & Webhook
+// Requires table ssdi_esign — see backend/sql/ssdi_esign.sql
+// ==============================
+
+router.get('/ssdi_esign', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+  try {
+    const [rows] = await db.promisePool.execute(
+      `SELECT
+         uid,
+         status,
+         first_name,
+         last_name,
+         ssn,
+         birthday,
+         phone_number,
+         address,
+         zip_code,
+         city,
+         state,
+         mailing_address,
+         defendant_email,
+         attorney_email,
+         paralegal_email,
+         oc_email,
+         ai_response,
+         created_at,
+         updated_at
+       FROM ssdi_esign
+       WHERE case_id = ?`,
+      [caseId]
+    );
+    const record = rows.find(r => String(r.status).toLowerCase() === 'pending') || (rows.length ? rows[0] : null);
+    if (!record) {
+      return res.json({ success: true, data: null });
+    }
+    return res.json({ success: true, data: record });
+  } catch (err) {
+    console.error('❌  Fetch SSDI E-Sign data error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.get('/ssdi-esign/cases/:caseId', async (req, res) => {
+  const caseId = req.params.caseId;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+  try {
+    const [rows] = await db.promisePool.execute(
+      `SELECT
+         uid,
+         status,
+         first_name,
+         last_name,
+         ssn,
+         birthday,
+         phone_number,
+         address,
+         zip_code,
+         city,
+         state,
+         mailing_address,
+         defendant_email,
+         attorney_email,
+         paralegal_email,
+         oc_email,
+         ai_response,
+         created_at,
+         updated_at
+       FROM ssdi_esign
+       WHERE case_id = ?`,
+      [caseId]
+    );
+    const record = rows.find(r => String(r.status).toLowerCase() === 'pending') || (rows.length ? rows[0] : null);
+    if (!record) return res.json({ success: true, data: null });
+    return res.json({ success: true, data: record });
+  } catch (err) {
+    console.error('❌  Fetch SSDI E-Sign data error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/ssdi_esign', async (req, res) => {
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const uid = req.body.uid ?? null;
+  const status = req.body.status ?? 'pending';
+  const firstName = req.body.first_name ?? null;
+  const lastName = req.body.last_name ?? null;
+  const ssn = req.body.ssn ?? null;
+  const birthday = req.body.birthday ?? null;
+  const phoneNumber = req.body.phone_number ?? null;
+  const address = req.body.address ?? null;
+  const zipCode = req.body.zip_code ?? null;
+  const city = req.body.city ?? null;
+  const state = req.body.state ?? null;
+  const mailingAddress = req.body.mailing_address ?? null;
+  const defendantEmail = req.body.defendant_email ?? null;
+  const attorneyEmail = req.body.attorney_email ?? null;
+  const paralegalEmail = req.body.paralegal_email ?? null;
+  const ocEmail = req.body.oc_email ?? null;
+  const aiResponse = req.body.ai_response ?? null;
+
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+
+  try {
+    await db.promisePool.execute(
+      `INSERT INTO ssdi_esign (
+         case_id, uid, status,
+         first_name, last_name, ssn, birthday, phone_number, address, zip_code, city, state, mailing_address,
+         defendant_email, attorney_email, paralegal_email, oc_email, ai_response,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+       ON DUPLICATE KEY UPDATE
+         uid = VALUES(uid),
+         status = VALUES(status),
+         first_name = VALUES(first_name),
+         last_name = VALUES(last_name),
+         ssn = VALUES(ssn),
+         birthday = VALUES(birthday),
+         phone_number = VALUES(phone_number),
+         address = VALUES(address),
+         zip_code = VALUES(zip_code),
+         city = VALUES(city),
+         state = VALUES(state),
+         mailing_address = VALUES(mailing_address),
+         defendant_email = VALUES(defendant_email),
+         attorney_email = VALUES(attorney_email),
+         paralegal_email = VALUES(paralegal_email),
+         oc_email = VALUES(oc_email),
+         ai_response = VALUES(ai_response),
+         updated_at = NOW()`,
+      [
+        caseId,
+        uid,
+        status,
+        firstName,
+        lastName,
+        ssn,
+        birthday,
+        phoneNumber,
+        address,
+        zipCode,
+        city,
+        state,
+        mailingAddress,
+        defendantEmail,
+        attorneyEmail,
+        paralegalEmail,
+        ocEmail,
+        aiResponse,
+      ]
+    );
+    return res.json({ success: true, message: 'SSDI E-Sign data saved' });
+  } catch (err) {
+    console.error('❌  Save SSDI E-Sign data error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/ssdi_esign/phase-2-trigger', async (req, res) => {
+  const { caseId } = req.body || {};
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  const n8nUrl =
+    process.env.N8N_SSDI_ESIGN_PHASE_2_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/webhook/E-sign-SSDI-2';
+  try {
+    const response = await axios.post(n8nUrl, req.body, { headers: { 'Content-Type': 'application/json' }, timeout: 30000 });
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    const status = err.response?.status || 500;
+    const details = err.response?.data || err.message;
+    console.error('❌  SSDI E-Sign phase 2 trigger error:', details);
+    return res.status(status).json({ success: false, message: 'Failed to trigger SSDI E-Sign phase 2 webhook', details });
+  }
+});
+
+const updateSsdiEsignStatus = async (req, res) => {
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const status = req.body.status ?? 'pending';
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute(`UPDATE ssdi_esign SET status = ?, updated_at = NOW() WHERE case_id = ?`, [status, caseId]);
+    return res.json({ success: true, message: 'SSDI E-Sign status updated' });
+  } catch (err) {
+    console.error('❌  Update SSDI E-Sign status error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+router.put('/ssdi_esign', updateSsdiEsignStatus);
+router.post('/ssdi_esign', updateSsdiEsignStatus);
+router.put('/ssdi-esign', updateSsdiEsignStatus);
+router.post('/ssdi-esign', updateSsdiEsignStatus);
+
+router.delete('/ssdi_esign', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute('DELETE FROM ssdi_esign WHERE case_id = ?', [caseId]);
+    return res.status(200).json({ success: true, message: 'SSDI E-Sign entries deleted' });
+  } catch (err) {
+    console.error('❌ Delete SSDI E-Sign error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/ssdi_esign/trigger', async (req, res) => {
+  const { caseId, documents = [], uid } = req.body;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  const n8nUrl = process.env.N8N_SSDI_ESIGN_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/E-sign-SSDI-1';
+  try {
+    await db.promisePool.execute(
+      `INSERT INTO ssdi_esign (case_id, uid, status, created_at, updated_at)
+       VALUES (?, ?, 'pending', NOW(), NOW())
+       ON DUPLICATE KEY UPDATE status = 'pending', uid = VALUES(uid), updated_at = NOW()`,
+      [caseId, uid || null]
+    );
+    const response = await axios.post(n8nUrl, { caseId, documents: documents || [] });
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    try {
+      await db.promisePool.execute('UPDATE ssdi_esign SET status = ?, updated_at = NOW() WHERE case_id = ?', ['failed', caseId]);
+    } catch {}
+    return res.status(500).json({ success: false, message: 'Failed to trigger SSDI E-Sign automation', details: err.message });
+  }
+});
+
+router.post('/ssdi_esign/webhook', async (req, res) => {
+  const { caseId, uid, documents = [] } = req.body;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  const n8nUrl = process.env.N8N_SSDI_ESIGN_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/E-sign-SSDI-1';
+  try {
+    try {
+      await db.promisePool.execute('UPDATE ssdi_esign SET status = ?, updated_at = NOW() WHERE case_id = ?', ['loading', caseId]);
+    } catch {}
+    const response = await axios.post(n8nUrl, { caseId, uid: uid || null, documents: documents || [] });
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    try {
+      await db.promisePool.execute('UPDATE ssdi_esign SET status = ?, updated_at = NOW() WHERE case_id = ?', ['failed', caseId]);
+    } catch {}
+    return res.status(500).json({ success: false, message: 'Failed to send SSDI E-Sign webhook', details: err.message });
+  }
+});
+
+router.post('/ssdi_esign/ui-path-trigger', async (req, res) => {
+  const { caseId, documents = [] } = req.body;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  if (!Array.isArray(documents) || documents.length === 0) {
+    return res.status(400).json({ success: false, message: 'documents array is required and must not be empty' });
+  }
+  const n8nUrl =
+    process.env.N8N_SSDI_ESIGN_UIPATH_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/webhook/E-sign-SSDI-3';
+  try {
+    try {
+      await db.promisePool.execute('UPDATE ssdi_esign SET status = ?, updated_at = NOW() WHERE case_id = ?', ['loading', caseId]);
+    } catch {}
+    const response = await axios.post(n8nUrl, req.body, { headers: { 'Content-Type': 'application/json' }, timeout: 30000 });
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    try {
+      await db.promisePool.execute('UPDATE ssdi_esign SET status = ?, updated_at = NOW() WHERE case_id = ?', ['failed', caseId]);
+    } catch {}
+    const status = err.response?.status || 500;
+    const details = err.response?.data || err.message;
+    return res.status(status).json({ success: false, message: 'Failed to trigger SSDI E-Sign UiPath webhook', details });
+  }
+});
+
+router.post('/ssdi_esign/rerun', async (req, res) => {
+  const { caseId, uid } = req.body;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute(`UPDATE ssdi_esign SET status = 'pending', uid = ?, updated_at = NOW() WHERE case_id = ?`, [uid || null, caseId]);
+    const n8nUrl = process.env.N8N_SSDI_ESIGN_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/E-sign-SSDI-1';
+    const response = await axios.post(n8nUrl, { caseId });
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to re-run SSDI E-Sign automation', details: err.message });
+  }
+});
+
 module.exports = router;
