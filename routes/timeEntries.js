@@ -76,7 +76,7 @@ router.get("/time_entries", (req, res) => {
     SELECT
         te.time_entry_id, te.description, te.entry_date, te.billable, te.case_id,
         te.staff_id, te.activity_name, te.created_at, te.updated_at, te.rate,
-        te.flat_fee, te.hours,te.updated_by_uid, c.name AS case_name,
+        te.flat_fee, te.hours,te.updated_by_uid,te.company_time_batch_id, c.name AS case_name,
         CONCAT(au.first_name, ' ', au.last_name) AS active_user_staff_name,
         CONCAT(s.first_name, ' ', s.last_name) AS staff_table_staff_name
     FROM time_entries te
@@ -200,6 +200,8 @@ router.get("/time_entries/search", (req, res) => {
       te.flat_fee,
       te.hours,
       te.updated_by_uid,
+            te.company_time_batch_id,
+
       c.name AS case_name,
       COALESCE(CONCAT(au.first_name, ' ', au.last_name), CONCAT(s.first_name, ' ', s.last_name)) AS staff_name
     FROM time_entries te
@@ -254,6 +256,7 @@ router.post("/time_entries", (req, res) => {
     flat_fee,
     hours,
     uid,
+    company_time_batch_id,
   } = req.body;
  
   if (
@@ -269,8 +272,8 @@ router.post("/time_entries", (req, res) => {
  
   const query = `
     INSERT INTO time_entries (description, entry_date, billable, case_id, staff_id, activity_name,
-                              created_at, updated_at, rate, flat_fee, hours, uid)
-    VALUES (?, ?, ?, ?, ?, ?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ?, ?, ?, ?)
+                              created_at, updated_at, rate, flat_fee, hours, uid,company_time_batch_id)
+    VALUES (?, ?, ?, ?, ?, ?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ?, ?, ?, ?,?)
   `;
  
   const values = [
@@ -284,6 +287,8 @@ router.post("/time_entries", (req, res) => {
     flat_fee,
     hours,
     uid,
+        company_time_batch_id || null,
+
   ];
  
   db.query(query, values, async(err, result) => {
