@@ -1335,7 +1335,13 @@ router.get("/cases/open", (req, res) => {
        practice_area,
        scheduling_assignment,
        last_offer_of_settlement,
-       attorneys_fee_settlement
+       attorneys_fee_settlement,
+        \`1696_faxed_date\`,
+       form_1696_status,
+       \`1696_processed\`,
+       ere_access,
+       \`local_ssa_office_fax_#\`,
+       \`claim_status_date_(ssi/ssdi)\`
 
   FROM cases
     WHERE COALESCE(closed_date, '') = ''
