@@ -1,4 +1,5 @@
 const express = require("express");
+const crypto = require("crypto");
 const router = express.Router();
 const db = require("../db");
  
@@ -329,6 +330,200 @@ router.get("/companies/:id/tasks", async (req, res) => {
     res.status(500).send("Error fetching company tasks.");
   }
 });
+
+// GET /companies/:id/time_entries - Paginated time entries across linked cases
+router.get("/companies/:id/time_entries", async (req, res) => {
+  const companyId = req.params.id;
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 20;
+  const offset = (page - 1) * limit;
+  const caseIdsFromQuery = String(req.query.case_ids || "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+  try {
+    let caseIds = caseIdsFromQuery;
+    if (!caseIds.length) {
+      const [linkedCases] = await db
+        .promise()
+        .query("SELECT case_id FROM company_case WHERE company_id = ?", [companyId]);
+      caseIds = linkedCases.map((r) => String(r.case_id)).filter(Boolean);
+    }
+
+    if (!caseIds.length) {
+      return res.json({ data: [], totalTimeEntries: 0, page, limit });
+    }
+
+    const placeholders = caseIds.map(() => "?").join(",");
+
+    const [rows] = await db.promise().query(
+      `
+      SELECT SQL_CALC_FOUND_ROWS
+        te.time_entry_id,
+        te.description,
+        te.entry_date,
+        te.billable,
+        te.case_id,
+        te.staff_id,
+        te.activity_name,
+        te.created_at,
+        te.updated_at,
+        te.rate,
+        te.flat_fee,
+        te.hours,
+        te.updated_by_uid,
+        te.uid,
+        c.name AS case_name,
+        CONCAT(au.first_name, ' ', au.last_name) AS active_user_staff_name,
+        CONCAT(s.first_name, ' ', s.last_name) AS staff_table_staff_name
+      FROM time_entries te
+      LEFT JOIN cases c ON CAST(c.case_id AS CHAR) = CAST(te.case_id AS CHAR)
+      LEFT JOIN active_users au ON te.staff_id = au.staff_id
+      LEFT JOIN staff s ON te.staff_id = s.staff_id
+      WHERE CAST(te.case_id AS CHAR) IN (${placeholders})
+      ORDER BY te.entry_date DESC, te.created_at DESC
+      LIMIT ? OFFSET ?
+      `,
+      [...caseIds, limit, offset]
+    );
+
+    const [[{ "FOUND_ROWS()": totalTimeEntries }]] = await db
+      .promise()
+      .query("SELECT FOUND_ROWS()");
+
+    res.json({ data: rows || [], totalTimeEntries, page, limit });
+  } catch (err) {
+    console.error("Error fetching company time entries:", err);
+    res.status(500).send("Error fetching company time entries.");
+  }
+});
+
+/** Rows per INSERT inside one transaction (avoids huge packets on very large companies). */
+const BULK_TIME_ENTRY_CHUNK = 500;
+
+// POST /companies/:id/time_entries/bulk — one request: same time entry on all (or listed) linked cases
+router.post("/companies/:companyId/time_entries/bulk", async (req, res) => {
+  const companyId = req.params.companyId;
+  const {
+    description,
+    entry_date,
+    billable,
+    staff_id,
+    activity_name,
+    rate,
+    flat_fee,
+    hours,
+    uid,
+    case_ids: caseIdsBody,
+  } = req.body;
+
+  // Match POST /time_entries required-field rules (no stricter checks here).
+  if (!description || !entry_date || !activity_name || !rate || !hours) {
+    return res.status(400).json({ error: "Missing required fields." });
+  }
+
+  let caseIds = Array.isArray(caseIdsBody)
+    ? caseIdsBody.map((v) => String(v).trim()).filter(Boolean)
+    : [];
+
+  try {
+    if (!caseIds.length) {
+      const [linkedCases] = await db
+        .promise()
+        .query("SELECT case_id FROM company_case WHERE company_id = ?", [companyId]);
+      caseIds = linkedCases.map((r) => String(r.case_id)).filter(Boolean);
+    }
+
+    if (!caseIds.length) {
+      return res.status(400).json({ error: "No cases linked to this company." });
+    }
+
+    const uniqueCaseIds = [...new Set(caseIds)];
+    const inPlaceholders = uniqueCaseIds.map(() => "?").join(",");
+    const [validLinks] = await db.promise().query(
+      `SELECT case_id FROM company_case WHERE company_id = ? AND case_id IN (${inPlaceholders})`,
+      [companyId, ...uniqueCaseIds]
+    );
+    const allowed = new Set(validLinks.map((r) => String(r.case_id)));
+    if (allowed.size !== uniqueCaseIds.length) {
+      return res.status(400).json({ error: "One or more cases are not linked to this company." });
+    }
+
+    const companyTimeBatchId = crypto.randomUUID();
+    const connection = await db.promise().getConnection();
+
+    const insertRowSql = `(?, ?, ?, ?, ?, ?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ?, ?, ?, ?, ?)`;
+
+    try {
+      await connection.beginTransaction();
+
+      for (let i = 0; i < uniqueCaseIds.length; i += BULK_TIME_ENTRY_CHUNK) {
+        const chunk = uniqueCaseIds.slice(i, i + BULK_TIME_ENTRY_CHUNK);
+        const placeholders = chunk.map(() => insertRowSql).join(", ");
+        const flatValues = [];
+        for (const cid of chunk) {
+          flatValues.push(
+            description,
+            entry_date,
+            billable,
+            cid,
+            staff_id,
+            activity_name,
+            rate,
+            flat_fee,
+            hours,
+            uid,
+            companyTimeBatchId
+          );
+        }
+        await connection.query(
+          `INSERT INTO time_entries (description, entry_date, billable, case_id, staff_id, activity_name,
+            created_at, updated_at, rate, flat_fee, hours, uid, company_time_batch_id) VALUES ${placeholders}`,
+          flatValues
+        );
+      }
+
+      const [createdRows] = await connection.query(
+        `SELECT time_entry_id, case_id FROM time_entries WHERE company_time_batch_id = ? ORDER BY time_entry_id`,
+        [companyTimeBatchId]
+      );
+
+      for (let j = 0; j < createdRows.length; j += BULK_TIME_ENTRY_CHUNK) {
+        const logSlice = createdRows.slice(j, j + BULK_TIME_ENTRY_CHUNK);
+        const logPlaceholders = logSlice
+          .map(() => "(?, 'create', ?, ?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'))")
+          .join(", ");
+        const logFlat = [];
+        for (const r of logSlice) {
+          logFlat.push(r.time_entry_id, r.case_id, uid);
+        }
+        await connection.query(
+          `INSERT INTO time_entry_logs (time_entry_id, action, case_id, uid, timestamp) VALUES ${logPlaceholders}`,
+          logFlat
+        );
+      }
+
+      await connection.commit();
+
+      res.status(201).json({
+        message: "Time entries created for all linked cases.",
+        created: createdRows.length,
+        company_time_batch_id: companyTimeBatchId,
+        time_entry_ids: createdRows.map((r) => r.time_entry_id),
+      });
+    } catch (innerErr) {
+      await connection.rollback();
+      throw innerErr;
+    } finally {
+      connection.release();
+    }
+  } catch (err) {
+    console.error("Error bulk-creating company time entries:", err);
+    res.status(500).json({ error: "Error creating time entries.", details: err.message });
+  }
+});
+
 
 // GET /companies/:id/events - Paginated events across linked cases
 router.get("/companies/:id/events", async (req, res) => {
