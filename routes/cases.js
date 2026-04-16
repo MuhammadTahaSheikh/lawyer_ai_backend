@@ -67,6 +67,53 @@ function formatActivities(rows) {
 function getFilterSource(req) {
   return req.method === 'GET' ? req.query : (req.body || {});
 }
+/** Case search: keep legacy behavior and add token matching for multi-word queries.
+ *  - One word: identical to original (single LIKE group on name / case_number / [claim_number]).
+ *  - Several words: (legacy contiguous full-string LIKE) OR (each token must match, ANDed across
+ *    the same fields), so phrase matches still work and names like "Anderson, Lisa" also match. */
+function pushCaseSearchConditions(search, conditions, values, { includeClaimNumber = true } = {}) {
+  const s = String(search || "").trim();
+  const tokens = s.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return;
+
+  if (tokens.length === 1) {
+    if (includeClaimNumber) {
+      conditions.push("(name LIKE ? OR case_number LIKE ? OR claim_number LIKE ?)");
+      values.push(`%${tokens[0]}%`, `%${tokens[0]}%`, `%${tokens[0]}%`);
+    } else {
+      conditions.push("(name LIKE ? OR case_number LIKE ?)");
+      values.push(`%${tokens[0]}%`, `%${tokens[0]}%`);
+    }
+    return;
+  }
+
+  const legacyClause = includeClaimNumber
+    ? "(name LIKE ? OR case_number LIKE ? OR claim_number LIKE ?)"
+    : "(name LIKE ? OR case_number LIKE ?)";
+  const tokenClauses = [];
+  tokens.forEach(() => {
+    if (includeClaimNumber) {
+      tokenClauses.push("(name LIKE ? OR case_number LIKE ? OR claim_number LIKE ?)");
+    } else {
+      tokenClauses.push("(name LIKE ? OR case_number LIKE ?)");
+    }
+  });
+  const tokenizedClause = `(${tokenClauses.join(" AND ")})`;
+  conditions.push(`(${legacyClause} OR ${tokenizedClause})`);
+
+  if (includeClaimNumber) {
+    values.push(`%${s}%`, `%${s}%`, `%${s}%`);
+  } else {
+    values.push(`%${s}%`, `%${s}%`);
+  }
+  for (const token of tokens) {
+    if (includeClaimNumber) {
+      values.push(`%${token}%`, `%${token}%`, `%${token}%`);
+    } else {
+      values.push(`%${token}%`, `%${token}%`);
+    }
+  }
+}
 
 function normalizeCustomFieldsForSelection(srcCustomFields) {
   // Returns { includeFields: string[], queries: array }
@@ -227,8 +274,10 @@ router.get("/cases", (req, res) => {
   }
 
   if (search) {
-    conditions.push("(name LIKE ? OR case_number LIKE ? OR claim_number LIKE ?)");
-    values.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    // conditions.push("(name LIKE ? OR case_number LIKE ? OR claim_number LIKE ?)");
+    // values.push(`%${search}%`, `%${search}%`, `%${search}%`);
+        pushCaseSearchConditions(search, conditions, values, { includeClaimNumber: true });
+
   }
 
   if (practiceArea) {
@@ -435,8 +484,10 @@ if (caseStages.length === 1) {
     values.push(...caseStages);
   }
   if (search) {
-    conditions.push("(name LIKE ? OR case_number LIKE ? OR claim_number LIKE ?)");
-    values.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    // conditions.push("(name LIKE ? OR case_number LIKE ? OR claim_number LIKE ?)");
+    // values.push(`%${search}%`, `%${search}%`, `%${search}%`);
+        pushCaseSearchConditions(search, conditions, values, { includeClaimNumber: true });
+
   }
 
   // if (practiceArea) { conditions.push("practice_area = ?"); values.push(practiceArea); }
@@ -676,8 +727,10 @@ router.get("/cases/export", (req, res) => {
   }
  
   if (search) {
-    conditions.push("(name LIKE ? OR case_number LIKE ?)");
-    values.push(`%${search}%`, `%${search}%`);
+    // conditions.push("(name LIKE ? OR case_number LIKE ?)");
+    // values.push(`%${search}%`, `%${search}%`);
+      pushCaseSearchConditions(search, conditions, values, { includeClaimNumber: false });
+
   }
  
   if (practiceArea) {
@@ -796,7 +849,10 @@ router.post("/cases/export", (req, res) => {
     conditions.push(`case_stage IN (${caseStages.map(() => '?').join(',')})`);
     values.push(...caseStages);
   }
-  if (search) { conditions.push("(name LIKE ? OR case_number LIKE ?)"); values.push(`%${search}%`, `%${search}%`); }
+  // if (search) { conditions.push("(name LIKE ? OR case_number LIKE ?)"); values.push(`%${search}%`, `%${search}%`); }
+   if (search) {
+    pushCaseSearchConditions(search, conditions, values, { includeClaimNumber: false });
+  }
   // if (practiceArea) { conditions.push("practice_area = ?"); values.push(practiceArea); }
  if (practiceAreas.length === 1) {
     conditions.push("practice_area = ?");
