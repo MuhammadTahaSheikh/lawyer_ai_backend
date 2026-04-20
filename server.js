@@ -182,6 +182,61 @@ app.use("/wopi", wopiRouter);
 app.use(initialDisclosuresRoutes);
 
 // ─── 11) Quick Test Route ────────────────────────────────────────────────────
+app.get("/api/endpoints", (req, res) => {
+  const endpoints = [];
+
+  const getLayerPrefix = (layer) => {
+    if (layer.path) return layer.path;
+    if (!layer.regexp?.source) return "";
+
+    const match = layer.regexp.source.match(/\^\\\/([^\\]+)\\\/\?\(\?=\\\/\|\$\)/);
+    if (!match?.[1]) return "";
+
+    return `/${match[1].replace(/\\\//g, "/")}`;
+  };
+
+  const collectFromStack = (stack, prefix = "") => {
+    stack.forEach((layer) => {
+      if (layer.route && layer.route.path) {
+        const routePath =
+          typeof layer.route.path === "string"
+            ? layer.route.path
+            : layer.route.path?.toString?.() || "";
+        const methods = Object.keys(layer.route.methods || {})
+          .filter((method) => layer.route.methods[method])
+          .map((method) => method.toUpperCase());
+
+        methods.forEach((method) => {
+          endpoints.push({
+            method,
+            path: `${prefix}${routePath}`.replace(/\/+/g, "/").replace(/\/$/, "") || "/",
+          });
+        });
+      } else if (layer.name === "router" && layer.handle?.stack) {
+        const routerPrefix = getLayerPrefix(layer);
+        collectFromStack(layer.handle.stack, `${prefix}${routerPrefix}`.replace(/\/+/g, "/"));
+      }
+    });
+  };
+
+  if (app._router?.stack) {
+    collectFromStack(app._router.stack);
+  }
+
+  const uniqueEndpoints = Array.from(
+    new Map(
+      endpoints
+        .filter((endpoint) => endpoint.path.startsWith("/"))
+        .map((endpoint) => [`${endpoint.method} ${endpoint.path}`, endpoint])
+    ).values()
+  ).sort((a, b) => {
+    if (a.path === b.path) return a.method.localeCompare(b.method);
+    return a.path.localeCompare(b.path);
+  });
+
+  res.json(uniqueEndpoints);
+});
+
 app.get("/__test-error__", (req, res, next) => {
   next(new Error("💥 Intentional test error"));
 });
