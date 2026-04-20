@@ -11421,7 +11421,7 @@ router.post('/ssdi_esign/phase-2-trigger', async (req, res) => {
   const { caseId } = req.body || {};
   if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
   const n8nUrl =
-    process.env.N8N_SSDI_ESIGN_PHASE_2_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/webhook/E-sign-SSDI-2';
+    process.env.N8N_SSDI_ESIGN_PHASE_2_WEBHOOK_URL;
   try {
     const response = await axios.post(n8nUrl, req.body, { headers: { 'Content-Type': 'application/json' }, timeout: 30000 });
     return res.json({ success: true, data: response.data });
@@ -11466,7 +11466,7 @@ router.delete('/ssdi_esign', async (req, res) => {
 router.post('/ssdi_esign/trigger', async (req, res) => {
   const { caseId, documents = [], uid } = req.body;
   if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
-  const n8nUrl = process.env.N8N_SSDI_ESIGN_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/E-sign-SSDI-1';
+  const n8nUrl = process.env.N8N_SSDI_ESIGN_WEBHOOK_URL;
   try {
     await db.promisePool.execute(
       `INSERT INTO ssdi_esign (case_id, uid, status, created_at, updated_at)
@@ -11487,7 +11487,7 @@ router.post('/ssdi_esign/trigger', async (req, res) => {
 router.post('/ssdi_esign/webhook', async (req, res) => {
   const { caseId, uid, documents = [] } = req.body;
   if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
-  const n8nUrl = process.env.N8N_SSDI_ESIGN_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/E-sign-SSDI-1';
+  const n8nUrl = process.env.N8N_SSDI_ESIGN_WEBHOOK_URL;
   try {
     try {
       await db.promisePool.execute('UPDATE ssdi_esign SET status = ?, updated_at = NOW() WHERE case_id = ?', ['loading', caseId]);
@@ -11509,7 +11509,7 @@ router.post('/ssdi_esign/ui-path-trigger', async (req, res) => {
     return res.status(400).json({ success: false, message: 'documents array is required and must not be empty' });
   }
   const n8nUrl =
-    process.env.N8N_SSDI_ESIGN_UIPATH_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/webhook/E-sign-SSDI-3';
+    process.env.N8N_SSDI_ESIGN_UIPATH_WEBHOOK_URL;
   try {
     try {
       await db.promisePool.execute('UPDATE ssdi_esign SET status = ?, updated_at = NOW() WHERE case_id = ?', ['loading', caseId]);
@@ -11531,7 +11531,7 @@ router.post('/ssdi_esign/rerun', async (req, res) => {
   if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
   try {
     await db.promisePool.execute(`UPDATE ssdi_esign SET status = 'pending', uid = ?, updated_at = NOW() WHERE case_id = ?`, [uid || null, caseId]);
-    const n8nUrl = process.env.N8N_SSDI_ESIGN_WEBHOOK_URL || 'https://n8n.louislawgroup.com/webhook/E-sign-SSDI-1';
+    const n8nUrl = process.env.N8N_SSDI_ESIGN_WEBHOOK_URL;
     const response = await axios.post(n8nUrl, { caseId });
     return res.json({ success: true, data: response.data });
   } catch (err) {
