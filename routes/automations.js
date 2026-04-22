@@ -11538,5 +11538,266 @@ router.post('/ssdi_esign/rerun', async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to re-run SSDI E-Sign automation', details: err.message });
   }
 });
+// ==============================
+// SSDI Turndown (ssdi_turndown) CRUD & n8n queue
+// ==============================
+
+// Fetch SSDI Turndown data
+router.get('/ssdi_turndown', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) {
+    console.log('🔍 Fetch SSDI Turndown called with caseId:', caseId);
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+  console.log('🔍 Fetch SSDI Turndown called with caseId:', caseId);
+  try {
+    const [rows] = await db.promisePool.execute(
+      `SELECT
+         case_name,
+         client_email,
+         attorney_email,
+         paralegal_email,
+         uid,
+         uipath_uid,
+         status,
+         created_at,
+         updated_at
+       FROM ssdi_turndown
+       WHERE case_id = ?`,
+      [caseId]
+    );
+    const record = rows.find(r => String(r.status).toLowerCase() === 'pending') || (rows.length ? rows[0] : null);
+    return res.json({ success: true, data: record });
+  } catch (err) {
+    console.error('❌  Fetch SSDI Turndown data error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Upsert SSDI Turndown data
+router.post('/ssdi_turndown', async (req, res) => {
+  console.log('📥 POST /automations/ssdi_turndown body:', req.body);
+  const uid =
+    (req.body.uid ?? req.headers['x-user-uid']) ||
+    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'));
+
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const case_name = req.body.case_name ?? null;
+  const client_email = req.body.client_email ?? null;
+  const attorney_email = req.body.attorney_email ?? null;
+  const paralegal_email = req.body.paralegal_email ?? null;
+
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  try {
+    await db.promisePool.execute(
+      `INSERT INTO ssdi_turndown (
+         case_id,
+         uid,
+         case_name,
+         client_email,
+         attorney_email,
+         paralegal_email,
+         status,
+         created_at,
+         updated_at
+       ) VALUES (
+         ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW()
+       )
+       ON DUPLICATE KEY UPDATE
+         uid             = VALUES(uid),
+         case_name       = VALUES(case_name),
+         client_email    = VALUES(client_email),
+         attorney_email  = VALUES(attorney_email),
+         paralegal_email = VALUES(paralegal_email),
+         status          = VALUES(status),
+         updated_at      = NOW()
+      `,
+      [
+        caseId,
+        uid,
+        case_name,
+        client_email,
+        attorney_email,
+        paralegal_email
+      ]
+    );
+
+    return res.json({ success: true, message: 'SSDI Turndown data saved' });
+  } catch (err) {
+    console.error('❌  SSDI Turndown data save error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Update SSDI Turndown status
+router.put('/ssdi_turndown', async (req, res) => {
+  try {
+    const caseId = req.body.caseId ?? req.body.case_id ?? req.query.caseId ?? req.query.case_id ?? null;
+    let raw = (req.body.status ?? req.query.status ?? '').toString().trim().toLowerCase();
+
+    if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+    if (!raw) return res.status(400).json({ success: false, message: 'Missing status' });
+
+    const MAP = { complete: 'completed', in_progress: 'loading' };
+    const status = MAP[raw] ?? raw;
+    const ALLOWED = new Set(['pending', 'loading', 'completed', 'failed']);
+    if (!ALLOWED.has(status)) {
+      return res.status(400).json({ success: false, message: `Invalid status value: ${raw}. Allowed: ${[...ALLOWED].join(', ')}` });
+    }
+
+    const [result] = await db.promisePool.execute(
+      'UPDATE ssdi_turndown SET status = ? WHERE case_id = ?',
+      [status, caseId]
+    );
+
+    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Case not found' });
+
+    return res.json({ success: true, message: 'SSDI Turndown status updated', status });
+  } catch (err) {
+    console.error('❌  Update SSDI Turndown status error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Alias for SSDI Turndown status update
+router.put('/ssdi_turndown/status', async (req, res) => {
+  try {
+    const caseId = req.body.caseId ?? req.body.case_id ?? req.query.caseId ?? req.query.case_id ?? null;
+    let raw = (req.body.status ?? req.query.status ?? '').toString().trim().toLowerCase();
+
+    if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+    if (!raw) return res.status(400).json({ success: false, message: 'Missing status' });
+
+    const MAP = { complete: 'completed', in_progress: 'loading' };
+    const status = MAP[raw] ?? raw;
+    const ALLOWED = new Set(['pending', 'loading', 'completed', 'failed']);
+    if (!ALLOWED.has(status)) {
+      return res.status(400).json({ success: false, message: `Invalid status value: ${raw}. Allowed: ${[...ALLOWED].join(', ')}` });
+    }
+
+    const [result] = await db.promisePool.execute(
+      'UPDATE ssdi_turndown SET status = ? WHERE case_id = ?',
+      [status, caseId]
+    );
+
+    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Case not found' });
+
+    return res.json({ success: true, message: 'SSDI Turndown status updated', status });
+  } catch (err) {
+    console.error('❌  Update SSDI Turndown status error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Delete SSDI Turndown entries
+router.delete('/ssdi_turndown', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute('DELETE FROM ssdi_turndown WHERE case_id = ?', [caseId]);
+    return res.status(200).json({ success: true, message: 'SSDI Turndown entries deleted' });
+  } catch (err) {
+    console.error('❌  Delete SSDI Turndown entries error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.delete('/ssdi_turndown/:caseId', async (req, res) => {
+  const caseId = req.params.caseId;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute('DELETE FROM ssdi_turndown WHERE case_id = ?', [caseId]);
+    return res.status(200).json({ success: true, message: 'SSDI Turndown entries deleted' });
+  } catch (err) {
+    console.error('❌  Delete SSDI Turndown entries by param error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Trigger SSDI Turndown via n8n
+router.post('/ssdi_turndown/trigger', async (req, res) => {
+  const { caseId } = req.body;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  const n8nUrl =
+    process.env.N8N_SSDI_TURNDOWN_TRIGGER_URL;
+  try {
+    const response = await axios.post(n8nUrl, { caseId });
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    console.error('❌  SSDI Turndown trigger error:', err.response?.data || err.message);
+    return res
+      .status(500)
+      .json({ success: false, message: 'Failed to trigger SSDI Turndown automation', details: err.message });
+  }
+});
+
+// Re-run SSDI Turndown: clear existing and trigger again
+router.post('/ssdi_turndown/rerun', async (req, res) => {
+  const { caseId } = req.body;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  try {
+    await db.promisePool.execute('DELETE FROM ssdi_turndown WHERE case_id = ?', [caseId]);
+
+    const n8nUrl =
+      process.env.N8N_SSDI_TURNDOWN_TRIGGER_URL;
+    await axios.post(n8nUrl, { caseId });
+
+    return res.json({ success: true, message: 'SSDI Turndown re-run triggered' });
+  } catch (err) {
+    console.error('❌  SSDI Turndown re-run error:', err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Submit SSDI Turndown via second n8n webhook
+router.post('/ssdi_turndown/queue', async (req, res) => {
+  const {
+    caseId,
+    uid,
+    case_name,
+    client_email,
+    attorney_email,
+    paralegal_email
+  } = req.body;
+
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+
+  try {
+    await db.promisePool.execute(
+      'UPDATE ssdi_turndown SET status = ?, uipath_uid = ?, updated_at = NOW() WHERE case_id = ?',
+      ['loading', uid ?? null, caseId]
+    );
+  } catch (e) {
+    console.warn('⚠️ Failed to set loading status before queueing SSDI Turndown:', e.message);
+  }
+
+  const n8nUrl =
+    process.env.N8N_SSDI_TURNDOWN_QUEUE_URL;
+  try {
+    const payload = {
+      caseId,
+      case_name,
+      client_email,
+      attorney_email,
+      paralegal_email,
+      uid
+    };
+
+    const response = await axios.post(n8nUrl, payload);
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    console.error('❌ SSDI Turndown queue error for caseId', caseId, ':', err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: 'Failed to submit SSDI Turndown', details: err.message });
+  }
+});
 
 module.exports = router;
