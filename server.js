@@ -96,6 +96,9 @@ app.use((req, res, next) => {
   if (req.method === "GET" && req.path.startsWith("/case-documents/"))
     return next();
 
+  // Allow Telnyx fax webhook without API key
+  if (req.path === "/fax/webhook") return next();
+
   // Everything else requires an API key
   return verifyApiKey(req, res, next);
 });
@@ -153,6 +156,7 @@ const automationsRouter = require("./routes/automations");
 const caseLinksRoutes = require("./routes/caseLinks");
 const wopiRouter = require("./routes/wopi");
 const initialDisclosuresRoutes = require("./routes/initialDisclosures");
+const faxRouter = require("./routes/fax");
 
 // ─── 10) Mount Routes ────────────────────────────────────────────────────────
 app.use("/cases", communicationsRoutes);
@@ -179,6 +183,7 @@ app.use("/api/docuseal", eSignRoutes);
 app.use("/automations", automationsRouter);
 app.use(caseLinksRoutes);
 app.use("/wopi", wopiRouter);
+app.use("/fax", faxRouter);
 app.use(initialDisclosuresRoutes);
 
 // ─── 11) Quick Test Route ────────────────────────────────────────────────────
