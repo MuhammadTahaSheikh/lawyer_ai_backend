@@ -11800,4 +11800,738 @@ router.post('/ssdi_turndown/queue', async (req, res) => {
   }
 });
 
+
+// ==============================
+// Settlement Confirmation (settlement_confirmation) CRUD & UiPath queue
+// ==============================
+
+// Fetch Settlement Confirmation data
+router.get('/settlement_confirmation', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) {
+    console.log('🔍 Fetch Settlement Confirmation called with caseId:', caseId);
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+  console.log('🔍 Fetch Settlement Confirmation called with caseId:', caseId);
+  try {
+    const [rows] = await db.promisePool.execute(
+      `SELECT
+         attorney_email,
+         send_to,
+         email_subject,
+         email_body,
+         documents,
+         uid,
+         uipath_uid,
+         status,
+         created_at,
+         updated_at
+       FROM settlement_confirmation
+       WHERE case_id = ?`,
+      [caseId]
+    );
+    console.log('🔍 Settlement Confirmation query returned rows:', rows);
+    const record = rows.find(r => String(r.status).toLowerCase() === 'pending') || (rows.length ? rows[0] : null);
+    console.log('🔍 Selected Settlement Confirmation record to return:', record);
+    return res.json({ success: true, data: record });
+  } catch (err) {
+    console.error('❌  Fetch Settlement Confirmation data error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Upsert Settlement Confirmation data
+router.post('/settlement_confirmation', async (req, res) => {
+  console.log('📥 POST /automations/settlement_confirmation body:', req.body);
+  const uid =
+    (req.body.uid ?? req.headers['x-user-uid']) ||
+    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'));
+  console.log('🆔 Settlement Confirmation upsert uid:', uid);
+
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const attorney_email = req.body.attorney_email ?? null;
+  const send_to = req.body.send_to ?? null;
+  const email_subject = req.body.email_subject ?? null;
+  const email_body = req.body.email_body ?? null;
+  const documents = Array.isArray(req.body.documents) ? JSON.stringify(req.body.documents) : null;
+
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  try {
+    await db.promisePool.execute(
+      `INSERT INTO settlement_confirmation (
+         case_id,
+         uid,
+         attorney_email,
+         send_to,
+         email_subject,
+         email_body,
+         documents,
+         status,
+         created_at,
+         updated_at
+       ) VALUES (
+         ?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW()
+       )
+       ON DUPLICATE KEY UPDATE
+         uid                  = VALUES(uid),
+         attorney_email       = VALUES(attorney_email),
+         send_to              = VALUES(send_to),
+         email_subject        = VALUES(email_subject),
+         email_body           = VALUES(email_body),
+         documents            = VALUES(documents),
+         status               = VALUES(status),
+         updated_at           = NOW()
+      `,
+      [
+        caseId,
+        uid,
+        attorney_email,
+        send_to,
+        email_subject,
+        email_body,
+        documents
+      ]
+    );
+
+    return res.json({ success: true, message: 'Settlement Confirmation data saved' });
+  } catch (err) {
+    console.error('❌  Settlement Confirmation data save error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Update Settlement Confirmation status
+router.put('/settlement_confirmation', async (req, res) => {
+  try {
+    const caseId = req.body.caseId ?? req.body.case_id ?? req.query.caseId ?? req.query.case_id ?? null;
+    let raw = (req.body.status ?? req.query.status ?? '').toString().trim().toLowerCase();
+
+    if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+    if (!raw) return res.status(400).json({ success: false, message: 'Missing status' });
+
+    const MAP = { complete: 'completed', in_progress: 'loading' };
+    const status = MAP[raw] ?? raw;
+    const ALLOWED = new Set(['pending', 'loading', 'completed', 'failed']);
+    if (!ALLOWED.has(status)) {
+      return res.status(400).json({ success: false, message: `Invalid status value: ${raw}. Allowed: ${[...ALLOWED].join(', ')}` });
+    }
+
+    const [result] = await db.promisePool.execute(
+      'UPDATE settlement_confirmation SET status = ? WHERE case_id = ?',
+      [status, caseId]
+    );
+
+    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Case not found' });
+
+    console.log('✅ Updated Settlement Confirmation status for caseId', caseId, 'to', status);
+    return res.json({ success: true, message: 'Settlement Confirmation status updated', status });
+  } catch (err) {
+    console.error('❌  Update Settlement Confirmation status error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Alias for status update
+router.put('/settlement_confirmation/status', async (req, res) => {
+  try {
+    const caseId = req.body.caseId ?? req.body.case_id ?? req.query.caseId ?? req.query.case_id ?? null;
+    let raw = (req.body.status ?? req.query.status ?? '').toString().trim().toLowerCase();
+
+    if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+    if (!raw) return res.status(400).json({ success: false, message: 'Missing status' });
+
+    const MAP = { complete: 'completed', in_progress: 'loading' };
+    const status = MAP[raw] ?? raw;
+    const ALLOWED = new Set(['pending', 'loading', 'completed', 'failed']);
+    if (!ALLOWED.has(status)) {
+      return res.status(400).json({ success: false, message: `Invalid status value: ${raw}. Allowed: ${[...ALLOWED].join(', ')}` });
+    }
+
+    const [result] = await db.promisePool.execute(
+      'UPDATE settlement_confirmation SET status = ? WHERE case_id = ?',
+      [status, caseId]
+    );
+
+    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Case not found' });
+
+    console.log('✅ Updated Settlement Confirmation status for caseId', caseId, 'to', status);
+    return res.json({ success: true, message: 'Settlement Confirmation status updated', status });
+  } catch (err) {
+    console.error('❌  Update Settlement Confirmation status error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Delete Settlement Confirmation entries
+router.delete('/settlement_confirmation', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute('DELETE FROM settlement_confirmation WHERE case_id = ?', [caseId]);
+    return res.status(200).json({ success: true, message: 'Settlement Confirmation entries deleted' });
+  } catch (err) {
+    console.error('❌  Delete Settlement Confirmation entries error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.delete('/settlement_confirmation/:caseId', async (req, res) => {
+  const caseId = req.params.caseId;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute('DELETE FROM settlement_confirmation WHERE case_id = ?', [caseId]);
+    return res.status(200).json({ success: true, message: 'Settlement Confirmation entries deleted' });
+  } catch (err) {
+    console.error('❌  Delete Settlement Confirmation entries by param error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Trigger Settlement Confirmation via n8n
+router.post('/settlement_confirmation/trigger', async (req, res) => {
+  try {
+    const callerIp = (req.headers['x-forwarded-for']?.split(',')[0] || req.ip || '').toString().trim();
+    const ua = req.headers['user-agent'];
+    console.log('📥 Settlement Confirmation /settlement_confirmation/trigger invoked', {
+      ip: callerIp,
+      ua,
+      path: req.originalUrl,
+      method: req.method,
+      hasApiKey: Boolean(req.headers['x-api-key']),
+      xForwardedFor: req.headers['x-forwarded-for'],
+      body: req.body,
+    });
+  } catch (logErr) {
+    console.warn('⚠️ Failed to log Settlement Confirmation trigger caller info:', logErr.message);
+  }
+
+  const { caseId } = req.body;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  const n8nUrl = process.env.N8N_SETTLEMENT_CONFIRMATION_WEBHOOK_URL;
+  console.log('▶️  Triggering Settlement Confirmation webhook:', n8nUrl, 'with caseId:', caseId);
+
+  try {
+    const response = await axios.post(n8nUrl, { caseId });
+    console.log('✅  Settlement Confirmation automation triggered:', response.status, response.data);
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    console.error('❌  Settlement Confirmation trigger error:', err.response?.data || err.message);
+    return res
+      .status(500)
+      .json({ success: false, message: 'Failed to trigger Settlement Confirmation automation', details: err.message });
+  }
+});
+
+// Re-run Settlement Confirmation: clear existing and trigger again via n8n
+router.post('/settlement_confirmation/rerun', async (req, res) => {
+  const { caseId } = req.body;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  try {
+    await db.promisePool.execute('DELETE FROM settlement_confirmation WHERE case_id = ?', [caseId]);
+    console.log('🗑️ Deleted existing Settlement Confirmation entries for caseId', caseId);
+
+    const n8nUrl = process.env.N8N_SETTLEMENT_CONFIRMATION_WEBHOOK_URL;
+    console.log('▶️ Re-triggering Settlement Confirmation webhook:', n8nUrl, 'with caseId:', caseId);
+    const response = await axios.post(n8nUrl, { caseId });
+    console.log('✅  Re-run Settlement Confirmation automation triggered:', response.status);
+
+    return res.json({ success: true, message: 'Settlement Confirmation re-run triggered' });
+  } catch (err) {
+    console.error('❌  Settlement Confirmation re-run error:', err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Submit Settlement Confirmation to UiPath via n8n webhook
+router.post('/settlement_confirmation/queue', async (req, res) => {
+  const {
+    caseId,
+    uid,
+    attorney_email,
+    send_to,
+    email_subject,
+    email_body,
+    documents = []
+  } = req.body;
+
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+
+  try {
+    await db.promisePool.execute(
+      'UPDATE settlement_confirmation SET status = ?, uipath_uid = ?, updated_at = NOW() WHERE case_id = ?',
+      ['loading', uid ?? null, caseId]
+    );
+    console.log('💾 Settlement Confirmation status set to loading for caseId', caseId, 'by user', uid);
+  } catch (e) {
+    console.warn('⚠️ Failed to set loading status before queueing Settlement Confirmation:', e.message);
+  }
+
+  try {
+    const n8nUrl = process.env.N8N_SETTLEMENT_CONFIRMATION_EMAIL_WEBHOOK_URL;
+    console.log('▶️  Submitting Settlement Confirmation to n8n webhook:', n8nUrl, 'with caseId:', caseId);
+
+    const payload = {
+      caseId,
+      attorney_email,
+      send_to,
+      email_subject,
+      email_body,
+      documents,
+      uid
+    };
+
+    const response = await axios.post(n8nUrl, payload);
+    console.log('✅  Settlement Confirmation submitted to n8n:', response.status, response.data);
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    console.error('❌ Settlement Confirmation submit to n8n error for caseId', caseId, ':', err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: 'Failed to submit Settlement Confirmation to n8n', details: err.message });
+  }
+});
+
+
+// ==============================
+// Pfs to multiple clients (pfs_to_multiple_clients) — same flow as pfs_letter_to_client
+// with first / second / third client contact fields (see backend/sql/pfs_to_multiple_clients.sql).
+// n8n: (1) After trigger, use pending/loading then set `filed` for the three-client form.
+// (2) When the user saves step 2, the app sets `pending` and POSTs client fields to Step2 webhook;
+//     n8n should then call this API with status `filed_two` for attach/send step 3.
+// (3) Step 3 Send uses /queue → `loading`; n8n sets `completed` when done.
+// Env (optional; defaults match previous hardcoded URLs) — three steps, three URLs:
+//   N8N_PFS_TO_MULTIPLE_CLIENTS_TRIGGER_URL — step 1 trigger and re-run (same n8n webhook)
+//   N8N_PFS_TO_MULTIPLE_CLIENTS_STEP2_URL — after step-2 save (filed → pending)
+//   N8N_PFS_TO_MULTIPLE_CLIENTS_EMAIL_URL — step 3 /queue (UiPath / email)
+// ==============================
+
+const PFS_TO_MULTIPLE_CLIENTS_N8N_TRIGGER =
+  process.env.N8N_PFS_TO_MULTIPLE_CLIENTS_TRIGGER_URL;
+const PFS_TO_MULTIPLE_CLIENTS_N8N_STEP2 =
+  process.env.N8N_PFS_TO_MULTIPLE_CLIENTS_STEP2_URL;
+const PFS_TO_MULTIPLE_CLIENTS_N8N_EMAIL =
+  process.env.N8N_PFS_TO_MULTIPLE_CLIENTS_EMAIL_URL;
+
+router.get('/pfs_to_multiple_clients', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+  try {
+    const [rows] = await db.promisePool.execute(
+      `SELECT
+         case_name,
+         case_number,
+         claim_number,
+         policy_number,
+         premises,
+         date_of_loss,
+         address,
+         type_of_loss,
+         client_email,
+         client_name,
+         indemnity_settlement,
+         less_outstanding_costs,
+         total_disbursement,
+         attorney_fees_and_court_costs,
+         senders_email,
+         assigned_attorney_email,
+         paralegal_assignment_email,
+         first_client_name,
+         first_client_email,
+         second_client_name,
+         second_client_email,
+         third_client_name,
+         third_client_email,
+         proposal_date,
+         pfs_offer,
+         uid,
+         uipath_uid,
+         status,
+         created_at,
+         updated_at
+       FROM pfs_to_multiple_clients
+       WHERE case_id = ?`,
+      [caseId]
+    );
+    const record = rows.find(r => String(r.status).toLowerCase() === 'pending') || (rows.length ? rows[0] : null);
+    return res.json({ success: true, data: record });
+  } catch (err) {
+    console.error('Fetch Pfs to multiple clients error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+const upsertPfsToMultipleClientsBody = async (req, res) => {
+  const uid =
+    (req.body.uid ?? req.headers['x-user-uid']) ||
+    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'));
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const case_name = req.body.case_name ?? null;
+  const case_number = req.body.case_number ?? null;
+  const claim_number = req.body.claim_number ?? null;
+  const policy_number = req.body.policy_number ?? null;
+  const premises = req.body.premises ?? null;
+  const date_of_loss = req.body.date_of_loss ?? null;
+  const address = req.body.address ?? null;
+  const type_of_loss = req.body.type_of_loss ?? null;
+  const client_email = req.body.client_email ?? null;
+  const client_name = req.body.client_name ?? null;
+  const indemnity_settlement = req.body.indemnity_settlement ?? null;
+  const less_outstanding_costs = req.body.less_outstanding_costs ?? null;
+  const total_disbursement = req.body.total_disbursement ?? null;
+  const attorney_fees_and_court_costs = req.body.attorney_fees_and_court_costs ?? null;
+  const senders_email = req.body.senders_email ?? null;
+  const assigned_attorney_email = req.body.attorneys_email ?? req.body.assigned_attorney_email ?? null;
+  const paralegal_assignment_email = req.body.paralegal_email ?? req.body.paralegal_assignment_email ?? null;
+  const first_client_name = req.body.first_client_name ?? null;
+  const first_client_email = req.body.first_client_email ?? null;
+  const second_client_name = req.body.second_client_name ?? null;
+  const second_client_email = req.body.second_client_email ?? null;
+  const third_client_name = req.body.third_client_name ?? null;
+  const third_client_email = req.body.third_client_email ?? null;
+  const proposal_date = req.body.proposal_date ?? null;
+  const pfs_offer_raw = req.body.pfs_offer;
+  const pfs_offer =
+    pfs_offer_raw == null || pfs_offer_raw === ''
+      ? null
+      : String(pfs_offer_raw).replace(/\D/g, '') || null;
+  const status = req.body.status ?? 'pending';
+
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+
+  let previousStatus = null;
+  try {
+    const [existingRows] = await db.promisePool.execute(
+      'SELECT status FROM pfs_to_multiple_clients WHERE case_id = ? LIMIT 1',
+      [caseId]
+    );
+    previousStatus = existingRows[0]?.status ?? null;
+  } catch (readErr) {
+    console.warn('Pfs to multiple clients: could not read prior status:', readErr.message);
+  }
+
+  try {
+    await db.promisePool.execute(
+      `INSERT INTO pfs_to_multiple_clients (
+         case_id,
+         uid,
+         case_name,
+         case_number,
+         claim_number,
+         policy_number,
+         premises,
+         date_of_loss,
+         address,
+         type_of_loss,
+         client_email,
+         client_name,
+         indemnity_settlement,
+         less_outstanding_costs,
+         total_disbursement,
+         attorney_fees_and_court_costs,
+         senders_email,
+         assigned_attorney_email,
+         paralegal_assignment_email,
+         first_client_name,
+         first_client_email,
+         second_client_name,
+         second_client_email,
+         third_client_name,
+         third_client_email,
+         proposal_date,
+         pfs_offer,
+         status,
+         created_at,
+         updated_at
+       ) VALUES (
+         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW()
+       )
+       ON DUPLICATE KEY UPDATE
+         uid                              = VALUES(uid),
+         case_name                        = VALUES(case_name),
+         case_number                      = VALUES(case_number),
+         claim_number                     = VALUES(claim_number),
+         policy_number                    = VALUES(policy_number),
+         premises                         = VALUES(premises),
+         date_of_loss                     = VALUES(date_of_loss),
+         address                          = VALUES(address),
+         type_of_loss                     = VALUES(type_of_loss),
+         client_email                     = VALUES(client_email),
+         client_name                      = VALUES(client_name),
+         indemnity_settlement             = VALUES(indemnity_settlement),
+         less_outstanding_costs           = VALUES(less_outstanding_costs),
+         total_disbursement               = VALUES(total_disbursement),
+         attorney_fees_and_court_costs    = VALUES(attorney_fees_and_court_costs),
+         senders_email                    = VALUES(senders_email),
+         assigned_attorney_email          = VALUES(assigned_attorney_email),
+         paralegal_assignment_email      = VALUES(paralegal_assignment_email),
+         first_client_name                = COALESCE(NULLIF(TRIM(VALUES(first_client_name)), ''), first_client_name),
+         first_client_email               = COALESCE(NULLIF(TRIM(VALUES(first_client_email)), ''), first_client_email),
+         second_client_name               = COALESCE(NULLIF(TRIM(VALUES(second_client_name)), ''), second_client_name),
+         second_client_email              = COALESCE(NULLIF(TRIM(VALUES(second_client_email)), ''), second_client_email),
+         third_client_name                = COALESCE(NULLIF(TRIM(VALUES(third_client_name)), ''), third_client_name),
+         third_client_email               = COALESCE(NULLIF(TRIM(VALUES(third_client_email)), ''), third_client_email),
+         proposal_date                    = COALESCE(NULLIF(TRIM(VALUES(proposal_date)), ''), proposal_date),
+         pfs_offer                        = COALESCE(NULLIF(TRIM(VALUES(pfs_offer)), ''), pfs_offer),
+         status                           = VALUES(status),
+         updated_at                       = NOW()`,
+      [
+        caseId,
+        uid,
+        case_name,
+        case_number,
+        claim_number,
+        policy_number,
+        premises,
+        date_of_loss,
+        address,
+        type_of_loss,
+        client_email,
+        client_name,
+        indemnity_settlement,
+        less_outstanding_costs,
+        total_disbursement,
+        attorney_fees_and_court_costs,
+        senders_email,
+        assigned_attorney_email,
+        paralegal_assignment_email,
+        first_client_name,
+        first_client_email,
+        second_client_name,
+        second_client_email,
+        third_client_name,
+        third_client_email,
+        proposal_date,
+        pfs_offer,
+        status,
+      ]
+    );
+
+    const step2SubmittedTransition =
+      String(previousStatus || '').toLowerCase() === 'filed' &&
+      String(status || '').toLowerCase() === 'pending';
+    if (step2SubmittedTransition) {
+      try {
+        await axios.post(
+          PFS_TO_MULTIPLE_CLIENTS_N8N_STEP2,
+          {
+            caseId,
+            first_client_name,
+            first_client_email,
+            second_client_name,
+            second_client_email,
+            third_client_name,
+            third_client_email,
+            proposal_date,
+            pfs_offer: pfs_offer == null || pfs_offer === '' ? null : Number(pfs_offer),
+            status: 'pending',
+            uid,
+          },
+          { timeout: 20000 }
+        );
+        console.log('Pfs to multiple clients: Step2 n8n webhook OK for caseId', caseId);
+      } catch (n8nErr) {
+        console.warn(
+          'Pfs to multiple clients: Step2 n8n webhook failed (DB save succeeded):',
+          n8nErr.response?.data || n8nErr.message
+        );
+      }
+    }
+
+    return res.json({ success: true, message: 'Pfs to multiple clients saved' });
+  } catch (err) {
+    console.error('Pfs to multiple clients upsert error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+router.post('/pfs_to_multiple_clients', upsertPfsToMultipleClientsBody);
+router.post('/Pfs-to-Multiple-Clients', upsertPfsToMultipleClientsBody);
+
+const updatePfsToMultipleClientsStatus = async (req, res) => {
+  const caseId = req.body.caseId ?? req.body.case_id;
+  const status = req.body.status ?? 'pending';
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+  try {
+    await db.promisePool.execute(
+      `UPDATE pfs_to_multiple_clients SET status = ?, updated_at = NOW() WHERE case_id = ?`,
+      [status, caseId]
+    );
+    return res.json({ success: true, message: 'Pfs to multiple clients status updated' });
+  } catch (err) {
+    console.error('Update Pfs to multiple clients status error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+router.put('/pfs_to_multiple_clients', updatePfsToMultipleClientsStatus);
+router.put('/Pfs-to-Multiple-Clients', updatePfsToMultipleClientsStatus);
+
+router.delete('/pfs_to_multiple_clients', async (req, res) => {
+  const caseId = req.query.caseId ?? req.query.case_id;
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+  try {
+    await db.promisePool.execute('DELETE FROM pfs_to_multiple_clients WHERE case_id = ?', [caseId]);
+    return res.status(200).json({ success: true, message: 'Pfs to multiple clients entries deleted' });
+  } catch (err) {
+    console.error('Delete Pfs to multiple clients error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/pfs_to_multiple_clients/trigger', async (req, res) => {
+  const { caseId, documents = [], uid } = req.body;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+  const n8nUrl = PFS_TO_MULTIPLE_CLIENTS_N8N_TRIGGER;
+  try {
+    try {
+      await db.promisePool.execute(
+        `INSERT INTO pfs_to_multiple_clients (case_id, uid, status, created_at, updated_at)
+         VALUES (?, ?, 'pending', NOW(), NOW())
+         ON DUPLICATE KEY UPDATE
+           status = 'pending',
+           uid = VALUES(uid),
+           updated_at = NOW()`,
+        [caseId, uid || null]
+      );
+    } catch (e) {
+      console.warn('Failed to set pending before Pfs to multiple clients trigger:', e.message);
+    }
+    const payload = { caseId, documents: documents || [] };
+    const response = await axios.post(n8nUrl, payload);
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    try {
+      await db.promisePool.execute(
+        'UPDATE pfs_to_multiple_clients SET status = ?, updated_at = NOW() WHERE case_id = ?',
+        ['failed', caseId]
+      );
+    } catch (e) {
+      console.warn('Failed to set failed status (Pfs to multiple clients):', e.message);
+    }
+    return res
+      .status(500)
+      .json({ success: false, message: 'Failed to trigger Pfs to multiple clients automation', details: err.message });
+  }
+});
+
+router.post('/pfs_to_multiple_clients/rerun', async (req, res) => {
+  const { caseId } = req.body;
+  if (!caseId) {
+    return res.status(400).json({ success: false, message: 'Missing caseId' });
+  }
+  try {
+    await db.promisePool.execute('DELETE FROM pfs_to_multiple_clients WHERE case_id = ?', [caseId]);
+    const response = await axios.post(PFS_TO_MULTIPLE_CLIENTS_N8N_TRIGGER, { caseId });
+    return res.json({ success: true, message: 'Pfs to multiple clients re-run triggered', data: response.data });
+  } catch (err) {
+    console.error('Pfs to multiple clients re-run error:', err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/pfs_to_multiple_clients/queue', async (req, res) => {
+  const {
+    caseId,
+    uid,
+    case_name,
+    case_number,
+    claim_number,
+    policy_number,
+    premises,
+    date_of_loss,
+    address,
+    type_of_loss,
+    client_email,
+    client_name,
+    indemnity_settlement,
+    less_outstanding_costs,
+    total_disbursement,
+    attorney_fees_and_court_costs,
+    senders_email,
+    assigned_attorney_email,
+    paralegal_assignment_email,
+    first_client_name,
+    first_client_email,
+    second_client_name,
+    second_client_email,
+    third_client_name,
+    third_client_email,
+    proposal_date,
+    pfs_offer: pfs_offerRaw,
+    documents = [],
+  } = req.body;
+
+  if (!caseId) return res.status(400).json({ success: false, message: 'Missing caseId' });
+
+  const pfs_offer_digits =
+    pfs_offerRaw == null || pfs_offerRaw === ''
+      ? null
+      : String(pfs_offerRaw).replace(/\D/g, '') || null;
+
+  try {
+    await db.promisePool.execute(
+      'UPDATE pfs_to_multiple_clients SET status = ?, uipath_uid = ?, updated_at = NOW() WHERE case_id = ?',
+      ['loading', uid ?? null, caseId]
+    );
+  } catch (e) {
+    console.warn('Failed to set loading status (Pfs to multiple clients):', e.message);
+  }
+
+  const n8nUrl = PFS_TO_MULTIPLE_CLIENTS_N8N_EMAIL;
+  try {
+    const payload = {
+      caseId,
+      case_name,
+      case_number,
+      claim_number,
+      policy_number,
+      premises,
+      date_of_loss,
+      address,
+      type_of_loss,
+      client_email,
+      client_name,
+      indemnity_settlement,
+      less_outstanding_costs,
+      total_disbursement,
+      attorney_fees_and_court_costs,
+      senders_email,
+      attorneys_email: assigned_attorney_email,
+      paralegal_email: paralegal_assignment_email,
+      first_client_name,
+      first_client_email,
+      second_client_name,
+      second_client_email,
+      third_client_name,
+      third_client_email,
+      proposal_date,
+      pfs_offer:
+        pfs_offer_digits == null || pfs_offer_digits === '' ? null : Number(pfs_offer_digits),
+      uid,
+      documents: documents || [],
+    };
+    const response = await axios.post(n8nUrl, payload);
+    return res.json({ success: true, data: response.data });
+  } catch (err) {
+    console.error('Pfs to multiple clients UiPath submission error:', err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: 'Failed to submit Pfs to multiple clients to UiPath', details: err.message });
+  }
+});
+
+
 module.exports = router;

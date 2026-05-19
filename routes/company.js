@@ -141,6 +141,33 @@ router.get("/companies/names", (req, res) => {
 });
 
 
+// GET /companies/:id/cases — linked cases with id, name, and client email
+router.get("/companies/:id/cases", async (req, res) => {
+  const companyId = req.params.id;
+
+  try {
+    const [rows] = await db.promise().query(
+      `
+      SELECT
+        cs.case_id AS case_id,
+        cs.name AS case_name,
+        cs.clients_email AS client_email
+      FROM company_case cc
+      INNER JOIN cases cs ON CAST(cc.case_id AS CHAR) = CAST(cs.case_id AS CHAR)
+      WHERE cc.company_id = ?
+      ORDER BY cs.name ASC
+      `,
+      [companyId]
+    );
+
+    res.json({ cases: rows || [] });
+  } catch (err) {
+    console.error("Error fetching company cases:", err);
+    res.status(500).send("Error fetching company cases.");
+  }
+});
+ 
+
 // GET /companies/:id/notes - Paginated notes across all linked cases
 router.get("/companies/:id/notes", async (req, res) => {
   const companyId = req.params.id;
