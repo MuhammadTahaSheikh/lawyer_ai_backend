@@ -7,6 +7,30 @@ const logger = require("../logger");
 router.use(express.json({ limit: "5000mb" }));
 router.use(express.urlencoded({ limit: "5000mb", extended: true }));
 
+/** One row per note — scalar lookups only (active_users can have duplicate staff_id). */
+const CASE_NOTE_STAFF_NAME = (staffIdCol) =>
+  `COALESCE(
+    (SELECT NULLIF(TRIM(CONCAT(au.first_name, ' ', au.last_name)), '')
+     FROM active_users au WHERE au.staff_id = ${staffIdCol}
+     ORDER BY au.updated_at DESC NULLS LAST
+     LIMIT 1),
+    (SELECT NULLIF(TRIM(CONCAT(s.first_name, ' ', s.last_name)), '')
+     FROM staff s WHERE s.staff_id = ${staffIdCol} LIMIT 1)
+  )`;
+
+const CASE_NOTE_LIST_SELECT = `
+  SELECT
+    cn.id,
+    cn.case_id,
+    cn.subject,
+    cn.note,
+    cn.date,
+    cn.created_at AS "createdAt",
+    cn.updated_at AS "updatedAt",
+    ${CASE_NOTE_STAFF_NAME("cn.created_by_id")} AS "createdBy",
+    ${CASE_NOTE_STAFF_NAME("cn.updated_by_id")} AS "updatedBy"
+  FROM case_notes_record cn`;
+
 function formatActivities(rows) {
   return rows.map(activity => {
     if (activity.action === 'update' && activity.field_name) {
@@ -162,13 +186,14 @@ router.put("/case_notes/:id", async (req, res) => {
     }
 
     updatedFields.updated_by_id = staffResult[0].staff_id;
- 
+
+    const setColumns = Object.keys(updatedFields);
+    const setClause = setColumns.map((col) => `${col} = ?`).join(", ");
+    const setValues = setColumns.map((col) => updatedFields[col]);
+
     await db.promise().query(
-
-      "UPDATE case_notes_record SET ? WHERE id = ?",
-
-      [updatedFields, id]
-
+      `UPDATE case_notes_record SET ${setClause} WHERE id = ?`,
+      [...setValues, id]
     );
  
     for (const key of Object.keys(updatedFields)) {
@@ -280,34 +305,24 @@ router.get("/case_notes", async (req, res) => {
  
   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
  
+  const countFrom = `FROM case_notes_record cn`;
+
   try {
+    const [[{ total }]] = await db.promise().query(
+      `SELECT COUNT(*) AS total ${countFrom} ${whereClause}`,
+      values
+    );
+    const totalNotes = Number(total) || 0;
+
     const [rows] = await db.promise().query(
       `
-      SELECT SQL_CALC_FOUND_ROWS
-        cn.id,
-        cn.case_id,
-        cn.subject,
-        cn.note,
-        cn.date,
-        cn.created_at AS createdAt,
-        cn.updated_at AS updatedAt,
-        CONCAT(au1.first_name, ' ', au1.last_name) AS createdBy,
-        CONCAT(au2.first_name, ' ', au2.last_name) AS updatedBy,
-        CONCAT(s1.first_name, ' ', s1.last_name)   AS createdByStaff,
-        CONCAT(s2.first_name, ' ', s2.last_name)   AS updatedByStaff
-      FROM case_notes_record cn
-      LEFT JOIN active_users au1 ON cn.created_by_id = au1.staff_id
-      LEFT JOIN active_users au2 ON cn.updated_by_id = au2.staff_id
-      LEFT JOIN staff        s1  ON cn.created_by_id = s1.staff_id
-      LEFT JOIN staff        s2  ON cn.updated_by_id = s2.staff_id
+      ${CASE_NOTE_LIST_SELECT}
       ${whereClause}
       ORDER BY cn.date DESC, cn.created_at DESC
       LIMIT ? OFFSET ?
       `,
       [...values, limit, offset]
     );
- 
-    const [[{ 'FOUND_ROWS()': totalNotes }]] = await db.promise().query(`SELECT FOUND_ROWS()`);
  
     const formatDate = date =>
       new Date(date).toLocaleString("en-US", {
@@ -359,23 +374,7 @@ router.get("/case_notes/export/:case_id", async (req, res) => {
   try {
     const [rows] = await db.promise().query(
       `
-      SELECT
-        cn.id,
-        cn.case_id,
-        cn.subject,
-        cn.note,
-        cn.date,
-        cn.created_at AS createdAt,
-        cn.updated_at AS updatedAt,
-        CONCAT(au1.first_name, ' ', au1.last_name) AS createdBy,
-        CONCAT(au2.first_name, ' ', au2.last_name) AS updatedBy,
-        CONCAT(s1.first_name, ' ', s1.last_name)   AS createdByStaff,
-        CONCAT(s2.first_name, ' ', s2.last_name)   AS updatedByStaff
-      FROM case_notes_record cn
-      LEFT JOIN active_users au1 ON cn.created_by_id = au1.staff_id
-      LEFT JOIN active_users au2 ON cn.updated_by_id = au2.staff_id
-      LEFT JOIN staff        s1  ON cn.created_by_id = s1.staff_id
-      LEFT JOIN staff        s2  ON cn.updated_by_id = s2.staff_id
+      ${CASE_NOTE_LIST_SELECT}
       ${whereClause}
       ORDER BY cn.date DESC, cn.created_at DESC
       `,
@@ -400,7 +399,7 @@ router.get("/case_notes/export/:case_id", async (req, res) => {
     }));
     
     res.json({ 
-      totalNotes: rows.length,
+      totalNotes: caseNotes.length,
       caseNotes 
     });
   } catch (err) {
@@ -479,23 +478,7 @@ router.get("/case_notes_all/:case_id", async (req, res) => {
   try {
     const [rows] = await db.promise().query(
       `
-      SELECT
-        cn.id,
-        cn.case_id,
-        cn.subject,
-        cn.note,
-        cn.date,
-        cn.created_at AS createdAt,
-        cn.updated_at AS updatedAt,
-        CONCAT(au1.first_name, ' ', au1.last_name) AS createdBy,
-        CONCAT(au2.first_name, ' ', au2.last_name) AS updatedBy,
-        CONCAT(s1.first_name, ' ', s1.last_name)   AS createdByStaff,
-        CONCAT(s2.first_name, ' ', s2.last_name)   AS updatedByStaff
-      FROM case_notes_record cn
-      LEFT JOIN active_users au1 ON cn.created_by_id = au1.staff_id
-      LEFT JOIN active_users au2 ON cn.updated_by_id = au2.staff_id
-      LEFT JOIN staff        s1  ON cn.created_by_id = s1.staff_id
-      LEFT JOIN staff        s2  ON cn.updated_by_id = s2.staff_id
+      ${CASE_NOTE_LIST_SELECT}
       ${whereClause}
       ORDER BY cn.date DESC, cn.created_at DESC
       `,
@@ -520,7 +503,7 @@ router.get("/case_notes_all/:case_id", async (req, res) => {
     }));
     
     res.json({
-      totalNotes: rows.length,
+      totalNotes: caseNotes.length,
       caseNotes
     });
   } catch (err) {

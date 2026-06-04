@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const { safeNumericText } = require("../lib/sqlPgCompat");
 
 // ─── Constants & Helpers ─────────────────────────────────────────────────────
 
@@ -319,7 +320,13 @@ router.get("/employee_milestones", async (req, res) => {
   }
   if (!validateDates(req, res)) return;
 
-  const excludePlaceholders = EXCLUDED_ATTORNEYS.map(() => "?").join(", ");
+  const excludedList = EXCLUDED_ATTORNEYS.map(
+    (n) => `'${String(n).replace(/'/g, "''")}'`
+  ).join(", ");
+  const flatFeeNumeric = safeNumericText("te.flat_fee");
+  // Inline validated dates — PG cannot infer $1 type in LEFT JOIN … ON clauses
+  const sd = start_date;
+  const ed = end_date;
 
   const employeeMilestonesQuery = `
     SELECT
@@ -329,22 +336,22 @@ router.get("/employee_milestones", async (req, res) => {
       au.type,
       au.title,
       au.uid,
-      COALESCE(SUM(CASE WHEN te.billable = 1 THEN te.hours ELSE 0 END), 0) AS billable_hours,
-      COALESCE(SUM(CASE WHEN te.billable = 0 THEN te.hours ELSE 0 END), 0) AS non_billable_hours,
-      COALESCE(SUM(CASE WHEN te.billable = 1 THEN (te.rate * te.hours) ELSE 0 END), 0) AS total_billable_amount,
-      COALESCE(SUM(CASE WHEN te.billable = 1 THEN te.flat_fee ELSE 0 END), 0) AS billable_flat_fees,
-      COALESCE(SUM(CASE WHEN e.billable = 1 THEN (e.cost * e.units) ELSE 0 END), 0) AS billable_expenses,
-      COALESCE(SUM(CASE WHEN e.billable = 0 THEN (e.cost * e.units) ELSE 0 END), 0) AS non_billable_expenses,
+      COALESCE(SUM(CASE WHEN te.billable IS TRUE THEN te.hours ELSE 0::numeric END), 0) AS billable_hours,
+      COALESCE(SUM(CASE WHEN te.billable IS NOT TRUE THEN te.hours ELSE 0::numeric END), 0) AS non_billable_hours,
+      COALESCE(SUM(CASE WHEN te.billable IS TRUE THEN (te.rate * te.hours) ELSE 0::numeric END), 0) AS total_billable_amount,
+      COALESCE(SUM(CASE WHEN te.billable IS TRUE THEN ${flatFeeNumeric} ELSE 0::numeric END), 0) AS billable_flat_fees,
+      COALESCE(SUM(CASE WHEN e.billable IS TRUE THEN (e.cost * e.units) ELSE 0::numeric END), 0) AS billable_expenses,
+      COALESCE(SUM(CASE WHEN e.billable IS NOT TRUE THEN (e.cost * e.units) ELSE 0::numeric END), 0) AS non_billable_expenses,
       COALESCE(closure_counts.closure_count, 0) AS closure_count,
       COALESCE(new_client_counts.new_client_count, 0) AS new_client_count
 
     FROM active_users au
-    LEFT JOIN time_entries te ON au.staff_id = te.staff_id
-      AND DATE(te.entry_date) >= ?
-      AND DATE(te.entry_date) <= ?
+    LEFT JOIN time_entries te ON au.staff_id::bigint = te.staff_id
+      AND te.entry_date::date >= '${sd}'::date
+      AND te.entry_date::date <= '${ed}'::date
     LEFT JOIN expenses e ON au.staff_id = e.staff_id
-      AND DATE(e.entry_date) >= ?
-      AND DATE(e.entry_date) <= ?
+      AND e.entry_date::date >= '${sd}'::date
+      AND e.entry_date::date <= '${ed}'::date
     LEFT JOIN (
       SELECT
         COALESCE(c.assigned_attorney_uid, au_match.uid) AS attorney_uid,
@@ -357,14 +364,14 @@ router.get("/employee_milestones", async (req, res) => {
       )
       WHERE cal.field_name = 'practice_area'
         AND cal.new_value = 'PL Settled'
-        AND DATE(cal.timestamp) >= ?
-        AND DATE(cal.timestamp) <= ?
+        AND cal.timestamp::date >= '${sd}'::date
+        AND cal.timestamp::date <= '${ed}'::date
         AND c.practice_area = 'PL Settled'
         AND (c.assigned_attorney_uid IS NOT NULL OR au_match.uid IS NOT NULL)
         AND COALESCE(
           (SELECT CONCAT(first_name, ' ', last_name) FROM active_users WHERE uid = c.assigned_attorney_uid),
           c.assigned_attorney
-        ) NOT IN (${excludePlaceholders})
+        ) NOT IN (${excludedList})
       GROUP BY COALESCE(c.assigned_attorney_uid, au_match.uid)
     ) closure_counts ON au.uid = closure_counts.attorney_uid
        LEFT JOIN (
@@ -377,8 +384,8 @@ router.get("/employee_milestones", async (req, res) => {
         AND c.assigned_attorney = CONCAT(au_match.first_name, ' ', au_match.last_name)
       )
       WHERE (c.assigned_attorney_uid IS NOT NULL OR au_match.uid IS NOT NULL)
-        AND DATE(COALESCE(STR_TO_DATE(c.opened_date, '%Y-%m-%d'), STR_TO_DATE(c.opened_date, '%m/%d/%y'))) >= ?
-        AND DATE(COALESCE(STR_TO_DATE(c.opened_date, '%Y-%m-%d'), STR_TO_DATE(c.opened_date, '%m/%d/%y'))) <= ?
+        AND COALESCE(STR_TO_DATE(c.opened_date, '%Y-%m-%d'), STR_TO_DATE(c.opened_date, '%m/%d/%y')) >= '${sd}'::date
+        AND COALESCE(STR_TO_DATE(c.opened_date, '%Y-%m-%d'), STR_TO_DATE(c.opened_date, '%m/%d/%y')) <= '${ed}'::date
       GROUP BY COALESCE(c.assigned_attorney_uid, au_match.uid)
     ) new_client_counts ON au.uid = new_client_counts.attorney_uid
     WHERE au.active = 'Yes'
@@ -389,13 +396,7 @@ router.get("/employee_milestones", async (req, res) => {
   `;
 
   try {
-    const [results] = await db.promise().query(employeeMilestonesQuery, [
-      start_date, end_date,
-      start_date, end_date,
-      start_date, end_date,
-      ...EXCLUDED_ATTORNEYS,
-      start_date, end_date,
-    ]);
+    const [results] = await db.promise().query(employeeMilestonesQuery, []);
 
     res.json({
       attorneys: results.filter(isAttorney).map(mapEmployeeData),

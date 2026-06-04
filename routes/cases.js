@@ -40,10 +40,15 @@ const imageUpload = multer({ storage });
 // Helper: Get columns from "cases" table
 function getExistingColumns() {
   return new Promise((resolve, reject) => {
-    db.query("SHOW COLUMNS FROM cases", (err, rows) => {
-      if (err) return reject(err);
-      resolve(rows.map(row => row.Field));
-    });
+    db.query(
+      `SELECT column_name AS "Field" FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'cases'
+       ORDER BY ordinal_position`,
+      (err, rows) => {
+        if (err) return reject(err);
+        resolve(rows.map((row) => row.Field || row.field));
+      }
+    );
   });
 }
 function formatActivities(rows) {

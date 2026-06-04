@@ -268,11 +268,10 @@ router.get('/templates', (req, res) => {
   };
 
   try {
-    // 5) Kick off the walk from your root “templatesDir” and give it a top-level category name.
-    //    (You used 'Root' previously; keep using that if you want.)
+    if (!fs.existsSync(templatesDir)) {
+      fs.mkdirSync(templatesDir, { recursive: true });
+    }
     walk(templatesDir, 'Root');
-
-    // 6) After the walk finishes, send back the JSON.
     res.json({ categories: structure });
   } catch (err) {
     logger.error("Failed to list categorized templates", {
@@ -310,6 +309,9 @@ router.get('/esign-template', (req, res) => {
   };
  
   try {
+    if (!fs.existsSync(templatesDirE)) {
+      fs.mkdirSync(templatesDirE, { recursive: true });
+    }
     walk(templatesDirE, 'Root');
     res.json({ categories: structure });
   } catch (err) {

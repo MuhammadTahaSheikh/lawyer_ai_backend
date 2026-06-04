@@ -10,8 +10,16 @@ router.get("/columns", (req, res) => {
     }
   
     const tableName = `${parentType}s`;
-  
-    const tableColumnsQuery = `SHOW COLUMNS FROM \`${tableName}\``;
+    if (!/^[a-zA-Z0-9_]+$/.test(tableName)) {
+      return res.status(400).json({ error: "Invalid parent_type" });
+    }
+
+    const tableColumnsQuery = `
+      SELECT column_name AS "Field"
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = ?
+      ORDER BY ordinal_position
+    `;
     const customFieldsQuery = `
       SELECT cf.*, 
              lo.list_options_id, 
@@ -27,10 +35,13 @@ router.get("/columns", (req, res) => {
       WHERE cf.parent_type = ?
     `;
   
-    db.query(tableColumnsQuery, (err, tableResults) => {
+    db.query(tableColumnsQuery, [tableName], (err, tableResults) => {
       if (err) {
                  // If table doesn't exist yet, query without practice areas join
-          if (err.code === 'ER_NO_SUCH_TABLE' && err.sqlMessage && err.sqlMessage.includes('custom_field_practice_areas')) {
+          if (
+            (err.code === 'ER_NO_SUCH_TABLE' || err.code === '42P01') &&
+            err.sqlMessage && err.sqlMessage.includes('custom_field_practice_areas')
+          ) {
             const fallbackQuery = `
               SELECT cf.*, 
                      lo.list_options_id, 
@@ -75,7 +86,7 @@ router.get("/columns", (req, res) => {
                 }
               });
               const customFields = Array.from(customFieldsMap.values());
-              const tableColumns = tableResults.map((row) => row.Field);
+              const tableColumns = tableResults.map((row) => row.Field || row.field);
               return res.json({
                 table_columns: tableColumns,
                 custom_fields: customFields,
@@ -96,7 +107,7 @@ router.get("/columns", (req, res) => {
             .json({ error: "Error fetching custom fields.", details: err });
         }
   
-        const tableColumns = tableResults.map((row) => row.Field);
+        const tableColumns = tableResults.map((row) => row.Field || row.field);
   
         const customFieldsMap = new Map();
   

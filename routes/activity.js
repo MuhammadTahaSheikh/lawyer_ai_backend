@@ -100,10 +100,10 @@ router.get("/activities", async (req, res) => {
     const queries = {
       events: generateQuery(`
         SELECT
-          l.id as id,
-          l.event_id as item_id,
+          l.id::text AS id,
+          l.event_id::text AS item_id,
           e.event_name as item_name,
-          e.case_id,
+          e.case_id::text AS case_id,
           l.action,
           l.field_name,
           l.old_value,
@@ -126,10 +126,10 @@ router.get("/activities", async (req, res) => {
      
       documents: generateQuery(`
         SELECT
-          dal.document_id as id,
-          dal.document_id as item_id,
+          dal.document_id::text AS id,
+          dal.document_id::text AS item_id,
           d.name AS item_name,
-          d.case_id,
+          d.case_id::text AS case_id,
           dal.action,
           NULL as field_name,
           NULL as old_value,
@@ -152,10 +152,10 @@ router.get("/activities", async (req, res) => {
      
       tasks: generateQuery(`
         SELECT
-          tal.task_id as id,
-          tal.task_id as item_id,
+          tal.task_id::text AS id,
+          tal.task_id::text AS item_id,
           t.task_name as item_name,
-          t.case_id,
+          t.case_id::text AS case_id,
           tal.action,
           tal.field_name,
           tal.old_value,
@@ -171,17 +171,17 @@ router.get("/activities", async (req, res) => {
           NULL as case_name,
           NULL as case_number
         FROM task_activity_logs tal
-        LEFT JOIN task_record t ON tal.task_id = t.id
+        LEFT JOIN task_record t ON tal.task_id::integer = t.id
         LEFT JOIN active_users au ON tal.uid = au.uid
         WHERE tal.field_name != 'completed_at' ${buildUserFilter('au')}
       `, { caseIdColumn: 't.case_id' }),
      
       time_entries: generateQuery(`
         SELECT
-          log.time_entry_id as id,
-          log.time_entry_id as item_id,
+          log.time_entry_id::text AS id,
+          log.time_entry_id::text AS item_id,
           te.activity_name as item_name,
-          te.case_id,
+          te.case_id::text AS case_id,
           log.action,
           log.field_name,
           log.old_value,
@@ -204,10 +204,10 @@ router.get("/activities", async (req, res) => {
      
       case_notes: generateQuery(`
         SELECT
-          log.id as id,
-          log.note_id as item_id,
+          log.id::text AS id,
+          log.note_id::text AS item_id,
           cn.subject AS item_name,
-          log.case_id,
+          log.case_id::text AS case_id,
           log.action,
           log.field_name,
           log.old_value,
@@ -231,10 +231,10 @@ router.get("/activities", async (req, res) => {
      
       cases: generateQuery(`
         SELECT
-          log.id as id,
-          log.case_id as item_id,
+          log.id::text AS id,
+          log.case_id::text AS item_id,
           c.name AS item_name,
-          log.case_id,
+          log.case_id::text AS case_id,
           log.action,
           log.field_name,
           log.old_value,

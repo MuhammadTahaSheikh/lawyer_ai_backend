@@ -854,6 +854,14 @@ const express = require("express");
 const router = express.Router();
 const db = require("../db");
 const pool = db;
+const {
+  slugifyFieldName,
+  GET_COLUMN_TYPE_SQL,
+  buildAddColumnSql,
+  buildRenameColumnSql,
+  buildModifyListColumnSql,
+  CREATE_PRACTICE_AREAS_JUNCTION_SQL,
+} = require("../lib/customFieldsDb");
 
 // Map of allowed parent_type to actual table names
 const PARENT_TABLES = {
@@ -1145,21 +1153,12 @@ router.post("/custom_fields", (req, res) => {
           const custom_fields_id = result.insertId;
           const tableName = PARENT_TABLES[parent_type];
 
-          // 3) Build ALTER TABLE to add the new column
-          let alterTableSQL = "";
-          if (field_type === "long_text") {
-            alterTableSQL = `ALTER TABLE \`${tableName}\` ADD COLUMN \`${custom_fields_name}\` LONGTEXT`;
-          } else if (field_type === "short_text") {
-            alterTableSQL = `ALTER TABLE \`${tableName}\` ADD COLUMN \`${custom_fields_name}\` VARCHAR(255)`;
-          } else if (field_type === "number") {
-            alterTableSQL = `ALTER TABLE \`${tableName}\` ADD COLUMN \`${custom_fields_name}\` INT`;
-          } else if (field_type === "currency") {
-            alterTableSQL = `ALTER TABLE \`${tableName}\` ADD COLUMN \`${custom_fields_name}\` DECIMAL(10,2)`;
-          } else if (field_type === "date") {
-            alterTableSQL = `ALTER TABLE \`${tableName}\` ADD COLUMN \`${custom_fields_name}\` DATE`;
-          } else if (field_type === "list" && Array.isArray(list_options) && list_options.length) {
-            const enumVals = list_options.map(o => `'${o.option_value}'`).join(",");
-            alterTableSQL = `ALTER TABLE \`${tableName}\` ADD COLUMN \`${custom_fields_name}\` ENUM(${enumVals})`;
+          const alterTableSQL = buildAddColumnSql(tableName, custom_fields_name, field_type);
+          if (!alterTableSQL) {
+            return conn.rollback(() => {
+              conn.release();
+              return res.status(400).send("Unsupported field type.");
+            });
           }
 
           conn.query(alterTableSQL, err => {
@@ -1233,19 +1232,7 @@ router.post("/custom_fields", (req, res) => {
             // Helper function to insert practice areas
             function insertPracticeAreas() {
               if (Array.isArray(practice_areas) && practice_areas.length > 0) {
-                // Create junction table if it doesn't exist
-                const createTableSQL = `
-                  CREATE TABLE IF NOT EXISTS custom_field_practice_areas (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    custom_field_id_f BIGINT NOT NULL,
-                    practice_area_id INT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (custom_field_id_f) REFERENCES custom_fields(custom_fields_id) ON DELETE CASCADE,
-                    UNIQUE KEY unique_custom_field_practice_area (custom_field_id_f, practice_area_id)
-                  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                `;
-                
-                conn.query(createTableSQL, (err) => {
+                conn.query(CREATE_PRACTICE_AREAS_JUNCTION_SQL, (err) => {
                   if (err) {
                     return conn.rollback(() => {
                       conn.release();
@@ -1312,8 +1299,10 @@ router.post("/custom_fields", (req, res) => {
 });
 router.put("/custom_fields/:id/full_update", (req, res) => {
   const id = req.params.id;
-  const { custom_fields_name, parent_type, field_type, list_options, practice_areas } =
+  let { custom_fields_name, parent_type, field_type, list_options, practice_areas } =
     req.body;
+
+  custom_fields_name = slugifyFieldName(custom_fields_name);
 
   if (!custom_fields_name || !parent_type || !field_type) {
     return res.status(400).send("All fields are required.");
@@ -1376,20 +1365,11 @@ router.put("/custom_fields/:id/full_update", (req, res) => {
           }
 
           const tableName = PARENT_TABLES[oldParentType];
-          // Slugify the old custom field name to match the actual column
-          const oldColumnName = oldCustomFieldsName.trim().replace(/\s+/g, "_").toLowerCase();
-
-          // Get the column type dynamically, scoped to the current database
-          const getColumnTypeQuery = `
-            SELECT COLUMN_TYPE
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME   = ?
-              AND COLUMN_NAME  = ?
-          `;
+          const oldColumnName = slugifyFieldName(oldCustomFieldsName);
+          const newColumnName = slugifyFieldName(custom_fields_name);
 
           db.query(
-            getColumnTypeQuery,
+            GET_COLUMN_TYPE_SQL,
             [tableName, oldColumnName],
             (err, columnResult) => {
               if (err) {
@@ -1403,26 +1383,27 @@ router.put("/custom_fields/:id/full_update", (req, res) => {
                   .send("Column not found in the database.");
               }
 
-              const columnType = columnResult[0].COLUMN_TYPE;
+              const renameColumnQuery =
+                oldColumnName !== newColumnName
+                  ? buildRenameColumnSql(tableName, oldColumnName, newColumnName)
+                  : null;
 
-              // Rename column while preserving its data type
-              const renameColumnQuery = `
-                ALTER TABLE \`${tableName}\`
-                CHANGE COLUMN \`${oldColumnName}\` \`${custom_fields_name}\` ${columnType}
-              `;
+              const runRename = (cb) => {
+                if (!renameColumnQuery) return cb();
+                db.query(renameColumnQuery, (renameErr) => {
+                  if (renameErr) {
+                    console.error(`Error renaming column in ${tableName}:`, renameErr);
+                    return res
+                      .status(500)
+                      .send(
+                        `Error renaming column in ${tableName}: ${renameErr.message}`
+                      );
+                  }
+                  cb();
+                });
+              };
 
-              db.query(renameColumnQuery, (err) => {
-                if (err) {
-                  console.error(`Error renaming column in ${tableName}:`, err);
-                  return res
-                    .status(500)
-                    .send(
-                      `Error renaming column in ${tableName}: ${err.message}`
-                    );
-                }
-
-                updateListOptions();
-              });
+              runRename(() => updateListOptions());
             }
           );
 
@@ -1543,30 +1524,30 @@ router.put("/custom_fields/:id/full_update", (req, res) => {
                   }
                 });
 
-                // Update ENUM column in cases table based on list_options_id
-                const newEnumValues =
-                  providedIds2.length > 0
-                    ? providedIds2.map((id) => `'${id}'`).join(",")
-                    : "'N/A'";
-                const alterEnumQuery = `
-                ALTER TABLE \`${tableName}\` 
-                MODIFY COLUMN \`${custom_fields_name}\` ENUM(${newEnumValues})`;
-
-                updateQueries.push(
-                  new Promise((resolve, reject) => {
-                    db.query(alterEnumQuery, (err) => {
-                      if (err) {
-                        console.error(
-                          `Error modifying ENUM column in ${tableName}:`,
-                          err
-                        );
-                        reject(err);
-                      } else {
-                        resolve();
-                      }
-                    });
-                  })
+                // List columns are TEXT on PostgreSQL; options live in list_options.
+                const alterEnumQuery = buildModifyListColumnSql(
+                  tableName,
+                  newColumnName,
+                  providedIds2
                 );
+
+                if (alterEnumQuery) {
+                  updateQueries.push(
+                    new Promise((resolve, reject) => {
+                      db.query(alterEnumQuery, (err) => {
+                        if (err) {
+                          console.error(
+                            `Error modifying ENUM column in ${tableName}:`,
+                            err
+                          );
+                          reject(err);
+                        } else {
+                          resolve();
+                        }
+                      });
+                    })
+                  );
+                }
 
                 Promise.all(updateQueries)
                   .then(() => {
@@ -1588,19 +1569,7 @@ router.put("/custom_fields/:id/full_update", (req, res) => {
 
             // Helper function to update practice areas
             function updatePracticeAreas() {
-              // Create junction table if it doesn't exist
-              const createTableSQL = `
-                CREATE TABLE IF NOT EXISTS custom_field_practice_areas (
-                  id INT AUTO_INCREMENT PRIMARY KEY,
-                  custom_field_id_f INT NOT NULL,
-                  practice_area_id INT NOT NULL,
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  FOREIGN KEY (custom_field_id_f) REFERENCES custom_fields(custom_fields_id) ON DELETE CASCADE,
-                  UNIQUE KEY unique_custom_field_practice_area (custom_field_id_f, practice_area_id)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-              `;
-              
-              db.query(createTableSQL, (err) => {
+              db.query(CREATE_PRACTICE_AREAS_JUNCTION_SQL, (err) => {
                 if (err) {
                   console.error("Error creating/checking custom_field_practice_areas table:", err);
                   return res.status(500).send("Error with practice areas table.");

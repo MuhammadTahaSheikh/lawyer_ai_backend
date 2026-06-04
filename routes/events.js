@@ -351,9 +351,10 @@ router.delete("/events/:id", async (req, res) => {
 });
  
 // POST /events – add new event
-router.post("/events", (req, res) => {
+router.post("/events", async (req, res) => {
   const {
     case_id,
+    case_name: bodyCaseName,
     event_name,
     event_description,
     start_event,
@@ -373,6 +374,24 @@ router.post("/events", (req, res) => {
     return res.status(401).send("User UID missing in request headers");
   }
 
+  let case_name = bodyCaseName;
+  const resolvedCaseId = case_id || null;
+  if (resolvedCaseId && !case_name) {
+    try {
+      const [rows] = await db.promise().query(
+        "SELECT name FROM cases WHERE case_id = ?",
+        [resolvedCaseId]
+      );
+      case_name = rows[0]?.name;
+    } catch (lookupErr) {
+      console.error("Error looking up case name:", lookupErr);
+      return res.status(500).send("Error adding event.");
+    }
+  }
+  if (!case_name) {
+    case_name = resolvedCaseId ? "Unknown Case" : "No associated case";
+  }
+
   // Get Florida (Eastern Time) formatted date
   const createdAt = new Date().toLocaleString("en-US", {
     timeZone: "America/New_York",
@@ -385,14 +404,15 @@ router.post("/events", (req, res) => {
   const formattedCreatedAt = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')} ${time}`;
  
   const insertQuery = `
-    INSERT INTO case_events (case_id, event_name, event_description, start_event, end_event, location, event_type, created_by, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO case_events (case_id, case_name, event_name, event_description, start_event, end_event, location, event_type, created_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
  
   db.query(
     insertQuery,
     [
-      case_id,
+      resolvedCaseId,
+      case_name,
       event_name,
       event_description,
       start_event,
@@ -411,7 +431,7 @@ router.post("/events", (req, res) => {
       // Log event creation using UID from headers
       await db.promise().query(
         "INSERT INTO case_event_logs (event_id, action, case_id, uid, timestamp) VALUES (?, 'create', ?, ?, ?)",
-        [result.insertId, case_id, userUid, formattedCreatedAt]
+        [result.insertId, resolvedCaseId, userUid, formattedCreatedAt]
       );
  
       res.status(201).send({ id: result.insertId, ...req.body });
@@ -551,7 +571,8 @@ router.get("/api/events", (req, res) => {
     LEFT JOIN event_types et ON e.event_type = et.event_type_name
     LEFT JOIN staff s ON FIND_IN_SET(s.staff_id, e.staff) > 0
     WHERE e.case_id = ?
-    GROUP BY e.id
+    GROUP BY e.id, e.event_name, e.event_type, e.event_description, e.start_event, e.end_event,
+             e.staff, e.location, c.name, c.case_id, et.color_code
   `;
   
   db.query(eventQuery, [caseId], (err, results) => {
@@ -691,7 +712,8 @@ router.get("/api/eventsCaseDetail", (req, res) => {
     LEFT JOIN cases c ON e.case_id = c.case_id
     LEFT JOIN staff s ON FIND_IN_SET(s.staff_id, e.staff) > 0
     WHERE e.case_id = ? AND e.start_event >= ? AND e.end_event <= ?
-    GROUP BY e.id
+    GROUP BY e.id, e.event_name, e.event_type, e.event_description, e.start_event, e.end_event,
+             e.staff, c.name, c.case_id
   `;
   
   db.query(eventQuery, [caseId, startDate, endDate], (err, results) => {

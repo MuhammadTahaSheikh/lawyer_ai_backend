@@ -1,0 +1,109 @@
+const express = require("express");
+const router = express.Router();
+const db = require("../db");
+const { getSupabaseAdmin } = require("../lib/supabaseAdmin");
+
+/** Link Supabase Auth user id to active_users row by email (post-login). */
+router.post("/auth/link-session", async (req, res) => {
+  const { uid, email } = req.body || {};
+  if (!uid || !email) {
+    return res.status(400).json({ message: "uid and email are required" });
+  }
+  try {
+    const [result] = await db.promise().query(
+      `UPDATE active_users SET uid = ?, updated_at = NOW()
+       WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))`,
+      [uid, email]
+    );
+    return res.json({
+      success: true,
+      updated: (result.affectedRows ?? result.rowCount ?? 0) > 0,
+    });
+  } catch (err) {
+    console.error("auth/link-session:", err);
+    return res.status(500).json({ message: "Failed to link session" });
+  }
+});
+
+/** Admin create Supabase Auth user (Settings → User Management). */
+router.post("/auth/admin/create-user", async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) {
+    return res.status(400).json({ message: "email and password are required" });
+  }
+  try {
+    const admin = getSupabaseAdmin();
+    const { data, error } = await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+    });
+    if (error) {
+      return res.status(400).json({ message: error.message });
+    }
+    return res.status(201).json({
+      uid: data.user.id,
+      email: data.user.email,
+    });
+  } catch (err) {
+    console.error("auth/admin/create-user:", err);
+    return res
+      .status(500)
+      .json({ message: err.message || "Failed to create auth user" });
+  }
+});
+
+/** Admin: generate password recovery link without sending email (avoids auth email rate limits). */
+router.post("/auth/admin/recovery-link", async (req, res) => {
+  const { email } = req.body || {};
+  if (!email) {
+    return res.status(400).json({ message: "email is required" });
+  }
+  try {
+    const admin = getSupabaseAdmin();
+    const redirectTo =
+      process.env.SUPABASE_RESET_REDIRECT ||
+      process.env.REACT_APP_SUPABASE_RESET_REDIRECT ||
+      "http://localhost:3000/login";
+    const { data, error } = await admin.auth.admin.generateLink({
+      type: "recovery",
+      email,
+      options: { redirectTo },
+    });
+    if (error) {
+      return res.status(400).json({ message: error.message, code: error.code });
+    }
+    const link =
+      data?.properties?.action_link || data?.action_link || null;
+    if (!link) {
+      return res.status(500).json({ message: "Recovery link was not returned" });
+    }
+    return res.json({ link });
+  } catch (err) {
+    console.error("auth/admin/recovery-link:", err);
+    return res
+      .status(500)
+      .json({ message: err.message || "Failed to generate recovery link" });
+  }
+});
+
+/** Lookup user by email (login disabled check). */
+router.get("/users/by-email/:email", async (req, res) => {
+  try {
+    const email = decodeURIComponent(req.params.email);
+    const [rows] = await db.promise().query(
+      `SELECT staff_id, uid, first_name, last_name, email, disabled, type
+       FROM active_users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?)) LIMIT 1`,
+      [email]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: "User not found for email." });
+    }
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error("users/by-email:", err);
+    return res.status(500).json({ message: "Error fetching user." });
+  }
+});
+
+module.exports = router;

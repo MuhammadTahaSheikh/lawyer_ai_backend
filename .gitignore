@@ -3,6 +3,7 @@ node_modules/
 
 # Environment variables (secrets)
 .env
+scripts/.env.migration
 
 # Runtime data
 case-documents/
@@ -15,6 +16,9 @@ logs/
 venv/
 __pycache__/
 *.pyc
+
+# Migration / export artifacts
+exports/
 
 # Misc
 Mortgage letter.docx

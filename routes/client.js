@@ -381,47 +381,72 @@ router.post("/clients", (req, res) => {
   } = req.body;
 
   const address_line = `${home_street || ""} ${home_street_2 || ""}`.trim();
-  const insertQuery = `
-    INSERT INTO client (
-      id, email, first_name, middle_initial, last_name,
-      contact_group, cell_phone_number, work_phone_number, home_phone_number,
-      address_line, city, state, zip_code, country,
-      timezone, birthdate, company, job_title,
-      driver_license, driver_state, website, fax_number,
-      notes, uid, updated_at, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `;
+  const columns = [
+    "email",
+    "first_name",
+    "middle_initial",
+    "last_name",
+    "contact_group",
+    "cell_phone_number",
+    "work_phone_number",
+    "home_phone_number",
+    "address_line",
+    "city",
+    "state",
+    "zip_code",
+    "country",
+    "timezone",
+    "birthdate",
+    "company",
+    "job_title",
+    "driver_license",
+    "driver_state",
+    "website",
+    "fax_number",
+    "notes",
+    "uid",
+    "updated_at",
+    "created_at",
+  ];
+  const values = [
+    email,
+    first_name,
+    middle_name,
+    last_name,
+    contact_group,
+    mobile_phone,
+    work_phone,
+    home_phone,
+    address_line,
+    home_city,
+    home_state,
+    home_postal_code,
+    home_country,
+    timezone,
+    birthdate,
+    company,
+    job_title,
+    driver_license,
+    driver_state,
+    website,
+    fax_number,
+    notes,
+    uid,
+    updated_at,
+    created_at,
+  ];
+
+  if (id != null && id !== "") {
+    columns.unshift("id");
+    values.unshift(id);
+  }
+
+  const placeholders = columns.map(() => "?").join(", ");
+  const insertQuery = `INSERT INTO client (${columns.map((c) => `\`${c}\``).join(", ")}) VALUES (${placeholders})`;
 
   db.query(
     insertQuery,
-    [
-      id,
-      email,
-      first_name,
-      middle_name,
-      last_name,
-      contact_group,
-      mobile_phone,
-      work_phone,
-      home_phone,
-      address_line,
-      home_city,
-      home_state,
-      home_postal_code,
-      home_country,
-      timezone,
-      birthdate,
-      company,
-      job_title,
-      driver_license,
-      driver_state,
-      website,
-      fax_number,
-      notes,
-      uid,
-      updated_at,
-      created_at,
-    ],
+    values,
     (err, result) => {
       if (err) {
         console.error("Error creating client:", err);

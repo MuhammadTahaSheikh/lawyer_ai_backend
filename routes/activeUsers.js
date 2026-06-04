@@ -3,6 +3,16 @@ const express = require("express");
 const router = express.Router();
 const db = require("../db");
 
+/** PostgreSQL-compatible dynamic UPDATE (mysql2 `SET ?` is not supported). */
+function buildUpdateSet(fields) {
+  const keys = Object.keys(fields);
+  if (!keys.length) return null;
+  return {
+    sql: keys.map((col) => `${col} = ?`).join(", "),
+    values: keys.map((col) => fields[col]),
+  };
+}
+
 // GET /active_users – fetch active users (active = "Yes")
 router.get("/active_users", (req, res) => {
   db.query("SELECT * FROM active_users WHERE LOWER(active) = 'yes'", (err, results) => {
@@ -47,43 +57,67 @@ router.post("/active_users", (req, res) => {
     address_city = "", address_country = "", address_state = "", address_address1 = "",
     address_address2 = "", address_zip_code = "", cell_phone_number = "",
     work_phone_number = "", home_phone_number = "", type = "", title = "",
-    active = "Yes", default_hourly_rate = 0
+    active = "Yes", default_hourly_rate = 0,
+    permissions = "All firm cases",
+    access_all_cases = false,
+    disabled = "No",
   } = req.body;
   if (!email || !first_name || !last_name) {
     return res.status(400).send("Missing required fields: email, first_name, or last_name.");
   }
+  const permissionsVal =
+    permissions == null || permissions === "" ? "All firm cases" : permissions;
+  const disabledVal = disabled == null || disabled === "" ? "No" : disabled;
+  const accessAllCases =
+    access_all_cases === true ||
+    access_all_cases === 1 ||
+    access_all_cases === "1" ||
+    access_all_cases === "true";
   const insertQuery = `
     INSERT INTO active_users
       (email, first_name, middle_initial, last_name, address_city, address_country, address_state,
        address_address1, address_address2, address_zip_code, cell_phone_number, work_phone_number,
-       home_phone_number, type, title, active, default_hourly_rate, uid, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+       home_phone_number, type, title, active, default_hourly_rate, uid,
+       permissions, access_all_cases, disabled, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
   `;
   const values = [email, first_name, middle_initial, last_name, address_city, address_country, address_state,
     address_address1, address_address2, address_zip_code, cell_phone_number, work_phone_number,
-    home_phone_number, type, title, active, default_hourly_rate, uid];
+    home_phone_number, type, title, active, default_hourly_rate, uid,
+    permissionsVal, accessAllCases, disabledVal];
   db.query(insertQuery, values, (err, result) => {
     if (err) {
       console.error("Error adding active user:", err.sqlMessage || err);
       return res.status(500).send("Error adding active user: " + (err.sqlMessage || err.message));
     }
-    res.status(201).json({ staff_id: result.insertId, ...req.body });
+    res.status(201).json({
+      staff_id: result.insertId,
+      permissions: permissionsVal,
+      access_all_cases: accessAllCases ? 1 : 0,
+      disabled: disabledVal,
+      ...req.body,
+    });
   });
 });
 
 // PUT /active_users/:id – update active user
 router.put("/active_users/:id", (req, res) => {
   const staffId = req.params.id;
-  const updatedFields = req.body;
-  updatedFields.updated_at = new Date();
-  db.query("UPDATE active_users SET ? WHERE staff_id = ?", [updatedFields, staffId], (err, result) => {
+  const updatedFields = { ...req.body, updated_at: new Date() };
+  const set = buildUpdateSet(updatedFields);
+  if (!set) return res.status(400).send("No fields to update.");
+  db.query(
+    `UPDATE active_users SET ${set.sql} WHERE staff_id = ?`,
+    [...set.values, staffId],
+    (err, result) => {
     if (err) {
       console.error("Error updating active user:", err);
       return res.status(500).send("Error updating active user.");
     }
     if (!result.affectedRows) return res.status(404).send("Active user not found.");
     res.send("Active user updated successfully.");
-  });
+  }
+  );
 });
 
 // DELETE /active_users/:id – delete an active user
@@ -162,9 +196,15 @@ router.put("/active_users_basic/:id", (req, res) => {
  
   // Add updated_at timestamp
   filteredFields.updated_at = updated_at;
- 
+
+  const set = buildUpdateSet(filteredFields);
+  if (!set) return res.status(400).send("No fields to update.");
+
   // Update only the basic staff information
-  db.query("UPDATE active_users SET ? WHERE staff_id = ?", [filteredFields, staffId], (err, result) => {
+  db.query(
+    `UPDATE active_users SET ${set.sql} WHERE staff_id = ?`,
+    [...set.values, staffId],
+    (err, result) => {
     if (err) {
       console.error("Error updating active user basic info:", err);
       return res.status(500).send("Error updating active user information.");
@@ -175,9 +215,10 @@ router.put("/active_users_basic/:id", (req, res) => {
     }
  
     res.send("Active user information updated successfully.");
-  });
+  }
+  );
 });
- 
+
 router.get("/users/:uid", async (req, res) => {
   try {
     const uid = req.params.uid;
