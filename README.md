@@ -4,8 +4,9 @@ Node.js API for the Lawyer AI CMS (cases, documents, tickets, Supabase auth, and
 
 ## Repository
 
-- **Primary (your fork):** https://github.com/MuhammadTahaSheikh/lawyer_ai_backend.git
-- **Upstream (original):** https://github.com/ymesadev/cms-backend-dev.git
+**https://github.com/MuhammadTahaSheikh/lawyer_ai_backend.git** (`origin`)
+
+Optional upstream (original team repo): `upstream` → ymesadev/cms-backend-dev
 
 ## Setup
 
@@ -16,17 +17,10 @@ cp .env.example .env
 npm start
 ```
 
-## Remotes (this working copy)
-
-| Remote | URL | Use |
-|--------|-----|-----|
-| `lawyer-backend` | MuhammadTahaSheikh/lawyer_ai_backend | Push your changes |
-| `origin` | ymesadev/cms-backend-dev | Original upstream |
-
-Push to your repo:
+## Git
 
 ```bash
-git push lawyer-backend main
+git push origin main
 ```
 
 ## Clone into the monorepo folder
