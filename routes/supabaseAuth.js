@@ -25,12 +25,23 @@ router.post("/auth/link-session", async (req, res) => {
   }
 });
 
+function generateTemporaryPassword() {
+  const chars =
+    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
+  let password = "";
+  for (let i = 0; i < 24; i++) {
+    password += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return password;
+}
+
 /** Admin create Supabase Auth user (Settings → User Management). */
 router.post("/auth/admin/create-user", async (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) {
-    return res.status(400).json({ message: "email and password are required" });
+  const { email, password: providedPassword } = req.body || {};
+  if (!email) {
+    return res.status(400).json({ message: "email is required" });
   }
+  const password = (providedPassword || "").trim() || generateTemporaryPassword();
   try {
     const admin = getSupabaseAdmin();
     const { data, error } = await admin.auth.admin.createUser({
@@ -64,7 +75,7 @@ router.post("/auth/admin/recovery-link", async (req, res) => {
     const redirectTo =
       process.env.SUPABASE_RESET_REDIRECT ||
       process.env.REACT_APP_SUPABASE_RESET_REDIRECT ||
-      "http://localhost:3000/login";
+      "http://localhost:3000/set-password";
     const { data, error } = await admin.auth.admin.generateLink({
       type: "recovery",
       email,
