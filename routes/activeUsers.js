@@ -2,6 +2,10 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const {
+  deleteAuthUserByUidOrEmail,
+  updateAuthUserProfile,
+} = require("../lib/supabaseAdmin");
 
 /** PostgreSQL-compatible dynamic UPDATE (mysql2 `SET ?` is not supported). */
 function buildUpdateSet(fields) {
@@ -120,17 +124,39 @@ router.put("/active_users/:id", (req, res) => {
   );
 });
 
-// DELETE /active_users/:id – delete an active user
-router.delete("/active_users/:id", (req, res) => {
+// DELETE /active_users/:id – delete from active_users and Supabase Auth
+router.delete("/active_users/:id", async (req, res) => {
   const staffId = req.params.id;
-  db.query("DELETE FROM active_users WHERE staff_id = ?", [staffId], (err, result) => {
-    if (err) {
-      console.error("Error deleting active user:", err);
-      return res.status(500).send("Error deleting active user.");
+  try {
+    const [rows] = await db.promise().query(
+      "SELECT uid, email FROM active_users WHERE staff_id = ? LIMIT 1",
+      [staffId]
+    );
+    if (!rows.length) return res.status(404).send("Active user not found.");
+
+    const { uid, email } = rows[0];
+    try {
+      await deleteAuthUserByUidOrEmail({ uid, email });
+    } catch (authErr) {
+      console.error("Error deleting Supabase auth user:", authErr);
+      return res
+        .status(500)
+        .send(
+          "Error deleting user from authentication: " +
+            (authErr.message || "unknown error")
+        );
     }
+
+    const [result] = await db.promise().query(
+      "DELETE FROM active_users WHERE staff_id = ?",
+      [staffId]
+    );
     if (!result.affectedRows) return res.status(404).send("Active user not found.");
     res.send("Active user deleted successfully.");
-  });
+  } catch (err) {
+    console.error("Error deleting active user:", err);
+    res.status(500).send("Error deleting active user.");
+  }
 });
 // PUT /active_users/:id/disable – disable a user (set disabled = "Yes")
 router.put("/active_users/:id/disable", (req, res) => {
@@ -182,41 +208,70 @@ router.get("/users/:uid/profile-image", async (req, res) => {
   }
 });
 
-router.put("/active_users_basic/:id", (req, res) => {
+router.put("/active_users_basic/:id", async (req, res) => {
   const staffId = req.params.id;
   const { email, first_name, last_name, type, title, ...otherFields } = req.body;
   const updated_at = new Date();
- 
-  // Remove empty or undefined fields to avoid overwriting with empty values
-  const filteredFields = Object.fromEntries(
-    Object.entries({ email, first_name, last_name, type, title, ...otherFields }).filter(([_, value]) =>
-      value !== "" && value !== undefined && value !== null
-    )
-  );
- 
-  // Add updated_at timestamp
-  filteredFields.updated_at = updated_at;
 
-  const set = buildUpdateSet(filteredFields);
-  if (!set) return res.status(400).send("No fields to update.");
+  try {
+    const [existing] = await db.promise().query(
+      "SELECT uid, email, first_name, last_name FROM active_users WHERE staff_id = ? LIMIT 1",
+      [staffId]
+    );
+    if (!existing.length) return res.status(404).send("Active user not found.");
 
-  // Update only the basic staff information
-  db.query(
-    `UPDATE active_users SET ${set.sql} WHERE staff_id = ?`,
-    [...set.values, staffId],
-    (err, result) => {
-    if (err) {
-      console.error("Error updating active user basic info:", err);
-      return res.status(500).send("Error updating active user information.");
+    const current = existing[0];
+
+    const filteredFields = Object.fromEntries(
+      Object.entries({ email, first_name, last_name, type, title, ...otherFields }).filter(
+        ([_, value]) => value !== "" && value !== undefined && value !== null
+      )
+    );
+    filteredFields.updated_at = updated_at;
+
+    const set = buildUpdateSet(filteredFields);
+    if (!set) return res.status(400).send("No fields to update.");
+
+    const newEmail = filteredFields.email ?? current.email;
+    const emailChanged =
+      filteredFields.email != null &&
+      newEmail.trim().toLowerCase() !== (current.email || "").trim().toLowerCase();
+    const nameChanged =
+      (filteredFields.first_name != null &&
+        filteredFields.first_name !== current.first_name) ||
+      (filteredFields.last_name != null && filteredFields.last_name !== current.last_name);
+
+    if (emailChanged || nameChanged) {
+      try {
+        await updateAuthUserProfile({
+          uid: current.uid,
+          oldEmail: current.email,
+          email: emailChanged ? newEmail : undefined,
+          first_name: filteredFields.first_name ?? current.first_name,
+          last_name: filteredFields.last_name ?? current.last_name,
+        });
+      } catch (authErr) {
+        console.error("Error syncing Supabase auth user:", authErr);
+        return res
+          .status(500)
+          .send(
+            "Failed to update authentication: " +
+              (authErr.message || "unknown error")
+          );
+      }
     }
- 
-    if (!result.affectedRows) {
-      return res.status(404).send("Active user not found.");
-    }
- 
+
+    const [result] = await db.promise().query(
+      `UPDATE active_users SET ${set.sql} WHERE staff_id = ?`,
+      [...set.values, staffId]
+    );
+    if (!result.affectedRows) return res.status(404).send("Active user not found.");
+
     res.send("Active user information updated successfully.");
+  } catch (err) {
+    console.error("Error updating active user basic info:", err);
+    res.status(500).send("Error updating active user information.");
   }
-  );
 });
 
 router.get("/users/:uid", async (req, res) => {
