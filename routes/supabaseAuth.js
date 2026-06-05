@@ -25,6 +25,52 @@ router.post("/auth/link-session", async (req, res) => {
   }
 });
 
+const PRODUCTION_SET_PASSWORD_URL =
+  "https://lawyer-ai-eight.vercel.app/set-password";
+
+function resolvePasswordResetRedirect(req) {
+  const fromBody = (req.body?.redirectTo || "").trim();
+  if (fromBody) return fromBody;
+
+  const frontendOrigin = (req.headers["x-frontend-origin"] || "").trim();
+  if (frontendOrigin) {
+    try {
+      return `${new URL(frontendOrigin).origin}/set-password`;
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  const origin = (req.headers.origin || "").trim();
+  if (origin) {
+    try {
+      return `${new URL(origin).origin}/set-password`;
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  const referer = (req.headers.referer || "").trim();
+  if (referer) {
+    try {
+      return `${new URL(referer).origin}/set-password`;
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  if (process.env.FRONTEND_URL) {
+    const base = process.env.FRONTEND_URL.replace(/\/$/, "");
+    return `${base}/set-password`;
+  }
+
+  if (process.env.SUPABASE_RESET_REDIRECT) {
+    return process.env.SUPABASE_RESET_REDIRECT.trim();
+  }
+
+  return PRODUCTION_SET_PASSWORD_URL;
+}
+
 function generateTemporaryPassword() {
   const chars =
     "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
@@ -66,17 +112,13 @@ router.post("/auth/admin/create-user", async (req, res) => {
 
 /** Admin: generate password recovery link without sending email (avoids auth email rate limits). */
 router.post("/auth/admin/recovery-link", async (req, res) => {
-  const { email, redirectTo: bodyRedirect } = req.body || {};
+  const { email } = req.body || {};
   if (!email) {
     return res.status(400).json({ message: "email is required" });
   }
   try {
     const admin = getSupabaseAdmin();
-    const redirectTo =
-      (bodyRedirect || "").trim() ||
-      process.env.SUPABASE_RESET_REDIRECT ||
-      process.env.REACT_APP_SUPABASE_RESET_REDIRECT ||
-      "http://localhost:3000/set-password";
+    const redirectTo = resolvePasswordResetRedirect(req);
     const { data, error } = await admin.auth.admin.generateLink({
       type: "recovery",
       email,
@@ -90,7 +132,7 @@ router.post("/auth/admin/recovery-link", async (req, res) => {
     if (!link) {
       return res.status(500).json({ message: "Recovery link was not returned" });
     }
-    return res.json({ link });
+    return res.json({ link, redirectTo });
   } catch (err) {
     console.error("auth/admin/recovery-link:", err);
     return res
