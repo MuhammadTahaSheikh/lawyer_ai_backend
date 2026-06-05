@@ -1807,5 +1807,24 @@ router.get("/api/recent-searches/:uid", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch recent cases" });
   }
 });
+router.post('/api/cases/by-ids', async (req, res) => {
+  const { case_ids } = req.body;
+  if (!Array.isArray(case_ids)) {
+    return res.status(400).json({ error: 'case_ids must be an array' });
+  }
 
+  if (case_ids.length === 0) {
+    return res.json({ cases: [] }); // ✅ return early with empty result
+  }
+
+  try {
+    const placeholders = case_ids.map(() => '?').join(',');
+    const sql = `SELECT case_id, name FROM cases WHERE case_id IN (${placeholders})`;
+    const [cases] = await db.promise().query(sql, case_ids);
+    res.json({ cases });
+  } catch (error) {
+    console.error("Error fetching cases by IDs:", error);
+    res.status(500).json({ error: 'Failed to fetch selected cases' });
+  }
+});
 module.exports = router;
