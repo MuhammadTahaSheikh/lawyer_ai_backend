@@ -98,6 +98,7 @@ app.use((req, res, next) => {
 
     // Allow public ticket submission without API key
   if (req.method === "POST" && req.path === "/tickets") return next();
+  if (req.path.startsWith('/portal/')) return next(); // portal uses JWT auth, not API key
 
   // Allow Telnyx fax webhook without API key
   if (req.path === "/fax/webhook") return next();
@@ -162,6 +163,7 @@ const wopiRouter = require("./routes/wopi");
 const initialDisclosuresRoutes = require("./routes/initialDisclosures");
 const faxRouter = require("./routes/fax");
 const ticketsRoutes = require("./routes/tickets");
+const portalRoutes = require("./routes/portal");
 
 // ─── 10) Mount Routes ────────────────────────────────────────────────────────
 app.use("/cases", communicationsRoutes);
@@ -192,6 +194,8 @@ app.use("/wopi", wopiRouter);
 app.use("/fax", faxRouter);
 app.use(initialDisclosuresRoutes);
 app.use(ticketsRoutes);
+app.use(portalRoutes);
+
 
 // ─── 11) Quick Test Route ────────────────────────────────────────────────────
 app.get("/api/endpoints", (req, res) => {

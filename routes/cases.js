@@ -1756,12 +1756,19 @@ router.post("/api/recent-search", async (req, res) => {
     return res.status(400).json({ error: "Missing uid or case_id" });
   }
   try {
-    await db.promise().query(
-      `INSERT INTO recent_case_searches (uid, case_id, case_name, searched_at)
-       VALUES (?, ?, ?, NOW())
-       ON DUPLICATE KEY UPDATE searched_at = NOW(), case_name = VALUES(case_name)`,
-      [uid, case_id, case_name]
+    const [updateResult] = await db.promise().query(
+      `UPDATE recent_case_searches
+       SET searched_at = NOW(), case_name = ?
+       WHERE uid = ? AND case_id = ?`,
+      [case_name, uid, case_id]
     );
+    if (!updateResult.affectedRows) {
+      await db.promise().query(
+        `INSERT INTO recent_case_searches (uid, case_id, case_name, searched_at)
+         VALUES (?, ?, ?, NOW())`,
+        [uid, case_id, case_name]
+      );
+    }
     await db.promise().query(
       `DELETE FROM recent_case_searches
        WHERE uid = ? AND id NOT IN (
@@ -1770,7 +1777,7 @@ router.post("/api/recent-search", async (req, res) => {
            WHERE uid = ?
            ORDER BY searched_at DESC
            LIMIT 5
-         ) as recent
+         ) recent
        )`,
       [uid, uid]
     );
