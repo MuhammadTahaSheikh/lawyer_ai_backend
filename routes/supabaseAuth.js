@@ -66,13 +66,14 @@ router.post("/auth/admin/create-user", async (req, res) => {
 
 /** Admin: generate password recovery link without sending email (avoids auth email rate limits). */
 router.post("/auth/admin/recovery-link", async (req, res) => {
-  const { email } = req.body || {};
+  const { email, redirectTo: bodyRedirect } = req.body || {};
   if (!email) {
     return res.status(400).json({ message: "email is required" });
   }
   try {
     const admin = getSupabaseAdmin();
     const redirectTo =
+      (bodyRedirect || "").trim() ||
       process.env.SUPABASE_RESET_REDIRECT ||
       process.env.REACT_APP_SUPABASE_RESET_REDIRECT ||
       "http://localhost:3000/set-password";

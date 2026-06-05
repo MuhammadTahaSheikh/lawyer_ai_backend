@@ -38,6 +38,7 @@ app.use((req, res, next) => {
 const allowedOrigins = [
   "https://dev.louislawgroup.com",
   "https://laywer-ai.vercel.app",
+  "https://lawyer-ai-eight.vercel.app",
   "https://laywer-3z4qxflgd-ymesadevs-projects.vercel.app",
   "https://external-applications.louislawgroup.com",
   "https://cms.louislawgroup.com",
@@ -55,7 +56,8 @@ const corsOptions = {
     if (!incomingOrigin || allowedOrigins.includes(incomingOrigin)) {
       return callback(null, true);
     }
-    return callback(new Error("CORS not allowed"), false);
+    // Deny without throwing — Error() here becomes a 500 via the global handler.
+    return callback(null, false);
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: [
