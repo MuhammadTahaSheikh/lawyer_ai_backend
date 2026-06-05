@@ -71,6 +71,17 @@ function resolvePasswordResetRedirect(req) {
   return PRODUCTION_SET_PASSWORD_URL;
 }
 
+/** Supabase may fall back to Site URL (localhost) if redirect is not whitelisted in dashboard. */
+function applyRedirectToLink(link, redirectTo) {
+  try {
+    const url = new URL(link);
+    url.searchParams.set("redirect_to", redirectTo);
+    return url.toString();
+  } catch (_) {
+    return link;
+  }
+}
+
 function generateTemporaryPassword() {
   const chars =
     "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
@@ -127,12 +138,17 @@ router.post("/auth/admin/recovery-link", async (req, res) => {
     if (error) {
       return res.status(400).json({ message: error.message, code: error.code });
     }
-    const link =
+    const rawLink =
       data?.properties?.action_link || data?.action_link || null;
-    if (!link) {
+    if (!rawLink) {
       return res.status(500).json({ message: "Recovery link was not returned" });
     }
-    return res.json({ link, redirectTo });
+    const link = applyRedirectToLink(rawLink, redirectTo);
+    return res.json({
+      link,
+      redirectTo,
+      supabaseRedirectFixed: link !== rawLink,
+    });
   } catch (err) {
     console.error("auth/admin/recovery-link:", err);
     return res
