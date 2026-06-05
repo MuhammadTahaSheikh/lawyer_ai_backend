@@ -71,15 +71,15 @@ function resolvePasswordResetRedirect(req) {
   return PRODUCTION_SET_PASSWORD_URL;
 }
 
-/** Supabase may fall back to Site URL (localhost) if redirect is not whitelisted in dashboard. */
-function applyRedirectToLink(link, redirectTo) {
-  try {
-    const url = new URL(link);
-    url.searchParams.set("redirect_to", redirectTo);
-    return url.toString();
-  } catch (_) {
-    return link;
+/** Direct app link using hashed_token — avoids Supabase verify redirect / localhost Site URL issues. */
+function buildSetupPasswordLink(redirectTo, properties) {
+  const hashedToken = properties?.hashed_token;
+  if (hashedToken) {
+    const base = redirectTo.replace(/\/$/, "");
+    const page = base.endsWith("/set-password") ? base : `${base}/set-password`;
+    return `${page}?token_hash=${encodeURIComponent(hashedToken)}&type=recovery`;
   }
+  return properties?.action_link || null;
 }
 
 function generateTemporaryPassword() {
@@ -138,17 +138,12 @@ router.post("/auth/admin/recovery-link", async (req, res) => {
     if (error) {
       return res.status(400).json({ message: error.message, code: error.code });
     }
-    const rawLink =
-      data?.properties?.action_link || data?.action_link || null;
-    if (!rawLink) {
+    const properties = data?.properties || {};
+    const link = buildSetupPasswordLink(redirectTo, properties);
+    if (!link) {
       return res.status(500).json({ message: "Recovery link was not returned" });
     }
-    const link = applyRedirectToLink(rawLink, redirectTo);
-    return res.json({
-      link,
-      redirectTo,
-      supabaseRedirectFixed: link !== rawLink,
-    });
+    return res.json({ link, redirectTo });
   } catch (err) {
     console.error("auth/admin/recovery-link:", err);
     return res
