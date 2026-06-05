@@ -37,14 +37,32 @@ router.post("/case_stages", (req, res) => {
   if (!name) {
     return res.status(400).send("Name is required.");
   }
-  const query =
-    "INSERT INTO case_stage (case_stage_name, created_at, updated_at) VALUES (?, NOW(), NOW())";
-  db.query(query, [name], (err, result) => {
-    if (err) {
-      console.error("Error adding case stage:", err);
+  const orderQuery =
+    "SELECT COALESCE(MAX(stage_order), -1) + 1 AS next_order FROM case_stage";
+  db.query(orderQuery, (orderErr, orderResults) => {
+    if (orderErr) {
+      console.error("Error resolving stage order:", orderErr);
       return res.status(500).send("Error adding case stage.");
     }
-    res.status(201).json({ id: result.insertId, name });
+
+    const stage_order = orderResults[0]?.next_order ?? 0;
+    const insertQuery =
+      "INSERT INTO case_stage (case_stage_name, stage_order, created_at, updated_at) VALUES (?, ?, NOW(), NOW())";
+
+    db.query(insertQuery, [name, stage_order], (err, result) => {
+      if (err) {
+        console.error("Error adding case stage:", err);
+        return res.status(500).send("Error adding case stage.");
+      }
+      const case_stage_id = result.insertId;
+      res.status(201).json({
+        case_stage_id,
+        case_stage_name: name,
+        stage_order,
+        id: case_stage_id,
+        name,
+      });
+    });
   });
 });
 
