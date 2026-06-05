@@ -37,6 +37,43 @@ const storage = multer.diskStorage({
 });
 const imageUpload = multer({ storage });
 
+// POST /cases/:caseId/media – upload media (e.g. staff profile image)
+router.post("/cases/:caseId/media", imageUpload.single("media"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ message: "No media file uploaded." });
+  }
+
+  const caseId = req.params.caseId;
+  const { name, description, assigned_date, uid } = req.body;
+  const fileName = req.file.filename;
+  const relativePath = path.posix.join("case-media", String(caseId), fileName);
+  const assignedDate = assigned_date ? new Date(assigned_date) : new Date();
+
+  const query = `
+    INSERT INTO media (name, filename, path, description, assigned_date, case_id, uid, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+  `;
+
+  try {
+    await db.promise().query(query, [
+      name || fileName,
+      fileName,
+      relativePath,
+      description || null,
+      assignedDate,
+      parseInt(caseId, 10) || caseId,
+      uid || null,
+    ]);
+
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const imageUrl = `${baseUrl}/${relativePath}`;
+    res.status(200).json({ imageUrl, url: imageUrl, path: relativePath });
+  } catch (err) {
+    console.error("Error uploading media:", err);
+    res.status(500).json({ message: "Error saving media.", error: err.message });
+  }
+});
+
 // Helper: Get columns from "cases" table
 function getExistingColumns() {
   return new Promise((resolve, reject) => {

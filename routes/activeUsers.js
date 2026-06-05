@@ -165,7 +165,7 @@ router.put("/active_users/:id/enable", (req, res) => {
 router.get("/users/:uid/profile-image", async (req, res) => {
   const uid = req.params.uid;
   const query = `
-    SELECT CONCAT(?, "/", path) AS image_url
+    SELECT ?::text || '/' || REPLACE(path, '\\', '/') AS image_url
     FROM media
     WHERE uid = ? AND description = 'Profile Image'
     ORDER BY created_at DESC
